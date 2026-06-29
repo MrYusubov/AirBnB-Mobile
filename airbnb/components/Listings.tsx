@@ -1,20 +1,25 @@
-import { View, Text, StyleSheet, ListRenderItem, TouchableOpacity } from 'react-native';
+import { Alert, GestureResponderEvent, View, Text, StyleSheet, ListRenderItem, TouchableOpacity } from 'react-native';
 import { defaultStyles } from '@/constants/Styles';
 import { Ionicons } from '@expo/vector-icons';
-import { Link } from 'expo-router';
+import { Link, useFocusEffect } from 'expo-router';
 import Animated, { FadeInRight, FadeOutLeft } from 'react-native-reanimated';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BottomSheetFlatList, BottomSheetFlatListMethods } from '@gorhom/bottom-sheet';
+import { useUser } from '@clerk/clerk-expo';
+import Colors from '@/constants/Colors';
+import { getWishlistListingIds, Listing, toggleWishlist } from '@/lib/database/listings';
 
 interface Props {
-  listings: any[];
+  listings: Listing[];
   refresh: number;
   category: string;
 }
 
 const Listings = ({ listings: items, refresh, category }: Props) => {
   const listRef = useRef<BottomSheetFlatListMethods>(null);
+  const { user } = useUser();
   const [loading, setLoading] = useState<boolean>(false);
+  const [wishlistedIds, setWishlistedIds] = useState<string[]>([]);
 
   // Update the view to scroll the list back top
   useEffect(() => {
@@ -36,14 +41,65 @@ const Listings = ({ listings: items, refresh, category }: Props) => {
     }, 200);
   }, [category]);
 
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const loadWishlist = async () => {
+        if (!user?.id) {
+          setWishlistedIds([]);
+          return;
+        }
+
+        const nextIds = await getWishlistListingIds(user.id);
+
+        if (isActive) {
+          setWishlistedIds(nextIds);
+        }
+      };
+
+      loadWishlist().catch((error) => {
+        console.error('Failed to load wishlist ids', error);
+      });
+
+      return () => {
+        isActive = false;
+      };
+    }, [user?.id])
+  );
+
+  const onToggleWishlist = async (event: GestureResponderEvent, listingId: string) => {
+    event.stopPropagation();
+
+    if (!user?.id) {
+      Alert.alert('Login required', 'Please log in before adding homes to your wishlist.');
+      return;
+    }
+
+    const nextValue = await toggleWishlist(user.id, listingId);
+
+    setWishlistedIds((current) =>
+      nextValue ? [...new Set([...current, listingId])] : current.filter((id) => id !== listingId)
+    );
+  };
+
   // Render one listing row for the FlatList
-  const renderRow: ListRenderItem<any> = ({ item }) => (
+  const renderRow: ListRenderItem<Listing> = ({ item }) => {
+    const isWishlisted = wishlistedIds.includes(item.id);
+
+    return (
     <Link href={`/listing/${item.id}`} asChild>
       <TouchableOpacity>
         <Animated.View style={styles.listing} entering={FadeInRight} exiting={FadeOutLeft}>
           <Animated.Image source={{ uri: item.medium_url }} style={styles.image} />
-          <TouchableOpacity style={{ position: 'absolute', right: 30, top: 30 }}>
-            <Ionicons name="heart-outline" size={24} color="#000" />
+          <TouchableOpacity
+            style={styles.heartButton}
+            onPress={(event) => onToggleWishlist(event, item.id)}>
+            <Ionicons
+              name={isWishlisted ? 'heart' : 'heart-outline'}
+              size={24}
+              color={isWishlisted ? Colors.primary : '#000'}
+            />
           </TouchableOpacity>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text style={{ fontSize: 16, fontFamily: 'mon-sb' }}>{item.name}</Text>
@@ -60,7 +116,8 @@ const Listings = ({ listings: items, refresh, category }: Props) => {
         </Animated.View>
       </TouchableOpacity>
     </Link>
-  );
+    );
+  };
 
   return (
     <View style={defaultStyles.container}>
@@ -84,6 +141,17 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 300,
     borderRadius: 10,
+  },
+  heartButton: {
+    position: 'absolute',
+    right: 30,
+    top: 30,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   info: {
     textAlign: 'center',

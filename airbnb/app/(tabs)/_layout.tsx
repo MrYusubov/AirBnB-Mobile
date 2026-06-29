@@ -23,9 +23,10 @@ const Layout = () => {
       <Tabs.Screen
         name="whishlists"
         options={{
+          title: 'Wishlists',
           tabBarLabel: 'Wishlists',
-          tabBarIcon: ({ size, color }) => (
-            <Ionicons name="heart-outline" size={size} color={color} />
+          tabBarIcon: ({ size, color, focused }) => (
+            <Ionicons name={focused ? 'heart' : 'heart-outline'} size={size} color={color} />
           ),
         }}
       />

@@ -1,16 +1,44 @@
 import { View } from 'react-native';
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import ListingsBottomSheet from '@/components/ListingsBottomSheet';
-import listingsData from '@/assets/data/airbnb-listings.json';
 import ListingsMap from '@/components/ListingsMap';
-import listingsDataGeo from '@/assets/data/airbnb-listings.geo.json';
-import { Stack } from 'expo-router';
+import { Stack, useFocusEffect } from 'expo-router';
 import ExploreHeader from '@/components/ExploreHeader';
+import { getListings, getListingsGeo, Listing, ListingsGeo } from '@/lib/database/listings';
+
+const emptyListingsGeo: ListingsGeo = {
+  type: 'FeatureCollection' as const,
+  features: [],
+};
 
 const Page = () => {
-  const items = useMemo(() => listingsData as any, []);
-  const getoItems = useMemo(() => listingsDataGeo, []);
+  const [items, setItems] = useState<Listing[]>([]);
+  const [geoItems, setGeoItems] = useState(emptyListingsGeo);
   const [category, setCategory] = useState<string>('Tiny homes');
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+    const loadListings = async () => {
+      const [listings, listingsGeo] = await Promise.all([getListings(), getListingsGeo()]);
+
+        if (!isActive) {
+        return;
+      }
+
+      setItems(listings);
+      setGeoItems(listingsGeo);
+    };
+
+    loadListings().catch((error) => {
+      console.error('Failed to load listings from SQLite', error);
+    });
+
+    return () => {
+        isActive = false;
+    };
+    }, [])
+  );
 
   const onDataChanged = (category: string) => {
     setCategory(category);
@@ -24,7 +52,7 @@ const Page = () => {
           header: () => <ExploreHeader onCategoryChanged={onDataChanged} />,
         }}
       />
-      <ListingsMap listings={getoItems} />
+      <ListingsMap listings={geoItems} />
       <ListingsBottomSheet listings={items} category={category} />
     </View>
   );

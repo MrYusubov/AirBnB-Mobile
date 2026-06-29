@@ -15,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { Link } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { useIsAdmin } from '@/lib/admin';
+import { upsertUser } from '@/lib/database/listings';
 
 const Page = () => {
   const { signOut, isSignedIn } = useAuth();
@@ -23,6 +25,7 @@ const Page = () => {
   const [lastName, setLastName] = useState(user?.lastName);
   const [email, setEmail] = useState(user?.emailAddresses[0].emailAddress);
   const [edit, setEdit] = useState(false);
+  const { isAdmin } = useIsAdmin();
 
   // Load user data on mount
   useEffect(() => {
@@ -33,6 +36,15 @@ const Page = () => {
     setFirstName(user.firstName);
     setLastName(user.lastName);
     setEmail(user.emailAddresses[0].emailAddress);
+    upsertUser({
+      id: user.id,
+      email: user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? null,
+      first_name: user.firstName,
+      last_name: user.lastName,
+      image_url: user.imageUrl,
+    }).catch((error) => {
+      console.log('Failed to sync user to SQLite', error);
+    });
   }, [user]);
 
   // Update Clerk user data
@@ -115,6 +127,26 @@ const Page = () => {
         </View>
       )}
 
+      {isSignedIn && (
+        <View style={styles.actions}>
+          <Link href="/(modals)/add-house" asChild>
+            <TouchableOpacity style={styles.actionButton}>
+              <Ionicons name="home-outline" size={20} color="#fff" />
+              <Text style={styles.actionButtonText}>Add House</Text>
+            </TouchableOpacity>
+          </Link>
+
+          {isAdmin && (
+            <Link href="/admin/pending-houses" asChild>
+              <TouchableOpacity style={[styles.actionButton, styles.adminButton]}>
+                <Ionicons name="shield-checkmark-outline" size={20} color="#fff" />
+                <Text style={styles.actionButtonText}>Pending Houses</Text>
+              </TouchableOpacity>
+            </Link>
+          )}
+        </View>
+      )}
+
       {isSignedIn && <Button title="Log Out" onPress={() => signOut()} color={Colors.dark} />}
       {!isSignedIn && (
         <Link href={'/(modals)/login'} asChild>
@@ -165,6 +197,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+  },
+  actions: {
+    gap: 12,
+    marginHorizontal: 24,
+    marginBottom: 24,
+  },
+  actionButton: {
+    height: 52,
+    borderRadius: 12,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  adminButton: {
+    backgroundColor: Colors.dark,
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontFamily: 'mon-b',
+    fontSize: 16,
   },
 });
 

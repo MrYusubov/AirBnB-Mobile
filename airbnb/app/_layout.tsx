@@ -93,6 +93,30 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="listing/[id]" options={{ headerTitle: '' }} />
       <Stack.Screen
+        name="admin/pending-houses"
+        options={{
+          title: 'Pending houses',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+        }}
+      />
+      <Stack.Screen
+        name="(modals)/add-house"
+        options={{
+          presentation: 'modal',
+          title: 'Add house',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="close-outline" size={28} />
+            </TouchableOpacity>
+          ),
+        }}
+      />
+      <Stack.Screen
         name="(modals)/booking"
         options={{
           presentation: 'transparentModal',

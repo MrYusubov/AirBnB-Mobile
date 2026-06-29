@@ -1,5 +1,5 @@
-import { View, Text, StyleSheet, ScrollView, Image, SafeAreaView } from 'react-native';
-import { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { useEffect, useState } from 'react';
 import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
@@ -7,8 +7,8 @@ import { TextInput } from 'react-native-gesture-handler';
 import { TouchableOpacity } from '@gorhom/bottom-sheet';
 import { defaultStyles } from '@/constants/Styles';
 import Colors from '@/constants/Colors';
-import { places } from '@/assets/data/places';
 import { useRouter } from 'expo-router';
+import { Destination, getDestinations } from '@/lib/database/listings';
 // @ts-ignore
 
 import DatePicker from 'react-native-modern-datepicker';
@@ -41,10 +41,32 @@ const guestsGropus = [
 const Page = () => {
   const [openCard, setOpenCard] = useState(0);
   const [selectedPlace, setSelectedPlace] = useState(0);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
 
   const [groups, setGroups] = useState(guestsGropus);
   const router = useRouter();
-  const today = new Date().toISOString().substring(0, 10);
+  const today = new Date().toISOString().substring(0, 10).replace(/-/g, '/');
+  const [selectedDate, setSelectedDate] = useState(today);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadDestinations = async () => {
+      const nextDestinations = await getDestinations();
+
+      if (isMounted) {
+        setDestinations(nextDestinations);
+      }
+    };
+
+    loadDestinations().catch((error) => {
+      console.error('Failed to load destinations from SQLite', error);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onClearAll = () => {
     setSelectedPlace(0);
@@ -82,12 +104,16 @@ const Page = () => {
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.placesContainer}>
-              {places.map((item, index) => (
+              {destinations.length === 0 && (
+                <View style={styles.emptyDestination}>
+                  <Text style={styles.emptyDestinationText}>No destinations yet</Text>
+                </View>
+              )}
+              {destinations.map((item, index) => (
                 <TouchableOpacity onPress={() => setSelectedPlace(index)} key={index}>
-                  <Image
-                    source={item.img}
-                    style={selectedPlace == index ? styles.placeSelected : styles.place}
-                  />
+                  <View style={selectedPlace == index ? styles.placeSelected : styles.place}>
+                    <Ionicons name="location-outline" size={28} color={Colors.dark} />
+                  </View>
                   <Text style={{ fontFamily: 'mon', paddingTop: 6 }}>{item.title}</Text>
                 </TouchableOpacity>
               ))}
@@ -121,8 +147,12 @@ const Page = () => {
                 borderColor: 'transparent',
               }}
               current={today}
-              selected={today}
+              selected={selectedDate}
+              isGregorian
               mode={'calendar'}
+              onSelectedChange={setSelectedDate}
+              onDateChange={setSelectedDate}
+              onMonthYearChange={() => {}}
             />
           </Animated.View>
         )}
@@ -299,6 +329,9 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 10,
+    backgroundColor: '#f4f4f4',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   placeSelected: {
     borderColor: Colors.grey,
@@ -306,6 +339,24 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     width: 100,
     height: 100,
+    backgroundColor: '#f4f4f4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyDestination: {
+    width: 220,
+    height: 100,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.grey,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  emptyDestinationText: {
+    fontFamily: 'mon',
+    color: Colors.grey,
+    textAlign: 'center',
   },
   previewText: {
     fontFamily: 'mon-sb',

@@ -1,7 +1,6 @@
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import React, { useLayoutEffect } from 'react';
-import { View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, Share } from 'react-native';
-import listingsData from '@/assets/data/airbnb-listings.json';
+import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { Alert, View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, Share } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import Animated, {
@@ -12,17 +11,28 @@ import Animated, {
   useScrollViewOffset,
 } from 'react-native-reanimated';
 import { defaultStyles } from '@/constants/Styles';
+import { getListingById, isListingWishlisted, Listing, toggleWishlist } from '@/lib/database/listings';
+import { useUser } from '@clerk/clerk-expo';
 
 const { width } = Dimensions.get('window');
 const IMG_HEIGHT = 300;
 
 const DetailsPage = () => {
   const { id } = useLocalSearchParams();
-  const listing = (listingsData as any[]).find((item) => item.id === id);
+  const listingId = Array.isArray(id) ? id[0] : id;
+  const { user } = useUser();
+  const [listing, setListing] = useState<Listing | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isWishlisted, setIsWishlisted] = useState(false);
   const navigation = useNavigation();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
+  const scrollOffset = useScrollViewOffset(scrollRef);
 
-  const shareListing = async () => {
+  const shareListing = useCallback(async () => {
+    if (!listing) {
+      return;
+    }
+
     try {
       await Share.share({
         title: listing.name,
@@ -31,7 +41,75 @@ const DetailsPage = () => {
     } catch (err) {
       console.log(err);
     }
-  };
+  }, [listing]);
+
+  const onToggleWishlist = useCallback(async () => {
+    if (!listingId) {
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Login required', 'Please log in before adding homes to your wishlist.');
+      return;
+    }
+
+    const nextValue = await toggleWishlist(user.id, listingId);
+    setIsWishlisted(nextValue);
+  }, [listingId, user?.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadListing = async () => {
+      if (!listingId) {
+        setIsLoading(false);
+        return;
+      }
+
+      const nextListing = await getListingById(listingId);
+
+      if (!isMounted) {
+        return;
+      }
+
+      setListing(nextListing);
+      setIsLoading(false);
+    };
+
+    loadListing().catch((error) => {
+      console.error('Failed to load listing from SQLite', error);
+      setIsLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [listingId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadWishlistState = async () => {
+      if (!user?.id || !listingId) {
+        setIsWishlisted(false);
+        return;
+      }
+
+      const nextValue = await isListingWishlisted(user.id, listingId);
+
+      if (isMounted) {
+        setIsWishlisted(nextValue);
+      }
+    };
+
+    loadWishlistState().catch((error) => {
+      console.error('Failed to load listing wishlist state', error);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [listingId, user?.id]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -46,8 +124,12 @@ const DetailsPage = () => {
           <TouchableOpacity style={styles.roundButton} onPress={shareListing}>
             <Ionicons name="share-outline" size={22} color={'#000'} />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.roundButton}>
-            <Ionicons name="heart-outline" size={22} color={'#000'} />
+          <TouchableOpacity style={styles.roundButton} onPress={onToggleWishlist}>
+            <Ionicons
+              name={isWishlisted ? 'heart' : 'heart-outline'}
+              size={22}
+              color={isWishlisted ? Colors.primary : '#000'}
+            />
           </TouchableOpacity>
         </View>
       ),
@@ -57,9 +139,7 @@ const DetailsPage = () => {
         </TouchableOpacity>
       ),
     });
-  }, []);
-
-  const scrollOffset = useScrollViewOffset(scrollRef);
+  }, [isWishlisted, navigation, onToggleWishlist, shareListing]);
 
   const imageAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -83,6 +163,22 @@ const DetailsPage = () => {
       opacity: interpolate(scrollOffset.value, [0, IMG_HEIGHT / 1.5], [0, 1]),
     };
   }, []);
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text style={{ fontFamily: 'mon-sb' }}>Loading listing...</Text>
+      </View>
+    );
+  }
+
+  if (!listing) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <Text style={{ fontFamily: 'mon-sb' }}>Listing not found</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -149,6 +245,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: 'white',
+  },
+  centered: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   image: {
     height: IMG_HEIGHT,
