@@ -1,14 +1,14 @@
 import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useUser } from '@clerk/clerk-expo';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import MapView, { Region } from 'react-native-maps';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { defaultStyles } from '@/constants/Styles';
-import { addListing } from '@/lib/database/listings';
+import { addListing, Category, getCategories } from '@/lib/database/listings';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
 
 type AddressSuggestion = {
@@ -40,6 +40,8 @@ export default function AddHousePage() {
   const [beds, setBeds] = useState('');
   const [bathrooms, setBathrooms] = useState('');
   const [guests, setGuests] = useState('');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [region, setRegion] = useState(initialRegion);
   const [images, setImages] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<AddressSuggestion[]>([]);
@@ -47,6 +49,29 @@ export default function AddHousePage() {
   const [showsUserLocation, setShowsUserLocation] = useState(false);
 
   const email = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses[0]?.emailAddress ?? null;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadCategories = async () => {
+      const nextCategories = await getCategories();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setCategories(nextCategories);
+      setSelectedCategoryId((current) => current ?? nextCategories[0]?.id ?? null);
+    };
+
+    loadCategories().catch((error) => {
+      console.error('Failed to load categories from SQLite', error);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const onPickImages = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -124,8 +149,8 @@ export default function AddHousePage() {
       return;
     }
 
-    if (!name.trim() || !description.trim() || !price.trim() || !address.trim()) {
-      Alert.alert('Missing information', 'Please fill title, description, price and address.');
+    if (!name.trim() || !description.trim() || !price.trim() || !address.trim() || !selectedCategoryId) {
+      Alert.alert('Missing information', 'Please fill title, description, category, price and address.');
       return;
     }
 
@@ -144,6 +169,7 @@ export default function AddHousePage() {
       await addListing({
         name: name.trim(),
         description: description.trim(),
+        category_id: selectedCategoryId,
         room_type: roomType.trim(),
         price: Number(price),
         smart_location: address.trim(),
@@ -207,6 +233,30 @@ export default function AddHousePage() {
           value={roomType}
           onChangeText={setRoomType}
         />
+      </View>
+      <View style={styles.field}>
+        <Text style={styles.label}>Category</Text>
+        <View style={styles.categoryGrid}>
+          {categories.map((category) => {
+            const isSelected = selectedCategoryId === category.id;
+
+            return (
+              <TouchableOpacity
+                key={category.id}
+                style={[styles.categoryButton, isSelected && styles.categoryButtonSelected]}
+                onPress={() => setSelectedCategoryId(category.id)}>
+                <MaterialIcons
+                  name={category.icon as any}
+                  size={22}
+                  color={isSelected ? Colors.primary : Colors.dark}
+                />
+                <Text style={[styles.categoryText, isSelected && styles.categoryTextSelected]}>
+                  {category.title}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
       <View style={styles.field}>
         <Text style={styles.label}>Price per night</Text>
@@ -365,6 +415,36 @@ const styles = StyleSheet.create({
     width: '47%',
     flexGrow: 1,
     gap: 6,
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  categoryButton: {
+    width: '47%',
+    minHeight: 54,
+    flexGrow: 1,
+    borderWidth: 1,
+    borderColor: '#dedede',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fff',
+  },
+  categoryButtonSelected: {
+    borderColor: Colors.primary,
+    backgroundColor: '#fff4f6',
+  },
+  categoryText: {
+    flex: 1,
+    fontFamily: 'mon-sb',
+    color: Colors.dark,
+  },
+  categoryTextSelected: {
+    color: Colors.primary,
   },
   secondaryButton: {
     height: 48,

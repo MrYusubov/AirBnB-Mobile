@@ -117,6 +117,36 @@ function RootLayoutNav() {
         }}
       />
       <Stack.Screen
+        name="(modals)/reserve"
+        options={{
+          presentation: 'modal',
+          title: 'Reserve',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="close-outline" size={28} />
+            </TouchableOpacity>
+          ),
+        }}
+      />
+      <Stack.Screen
+        name="(modals)/payment"
+        options={{
+          presentation: 'modal',
+          title: 'Payment',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()}>
+              <Ionicons name="close-outline" size={28} />
+            </TouchableOpacity>
+          ),
+        }}
+      />
+      <Stack.Screen
         name="(modals)/booking"
         options={{
           presentation: 'transparentModal',

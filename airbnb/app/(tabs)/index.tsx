@@ -14,34 +14,37 @@ const emptyListingsGeo: ListingsGeo = {
 const Page = () => {
   const [items, setItems] = useState<Listing[]>([]);
   const [geoItems, setGeoItems] = useState(emptyListingsGeo);
-  const [category, setCategory] = useState<string>('Tiny homes');
+  const [categoryId, setCategoryId] = useState<string>('tiny-homes');
 
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
-    const loadListings = async () => {
-      const [listings, listingsGeo] = await Promise.all([getListings(), getListingsGeo()]);
+      const loadListings = async () => {
+        const [listings, listingsGeo] = await Promise.all([
+          getListings('accepted', categoryId),
+          getListingsGeo(categoryId),
+        ]);
 
         if (!isActive) {
-        return;
-      }
+          return;
+        }
 
-      setItems(listings);
-      setGeoItems(listingsGeo);
-    };
+        setItems(listings);
+        setGeoItems(listingsGeo);
+      };
 
-    loadListings().catch((error) => {
-      console.error('Failed to load listings from SQLite', error);
-    });
+      loadListings().catch((error) => {
+        console.error('Failed to load listings from SQLite', error);
+      });
 
-    return () => {
+      return () => {
         isActive = false;
-    };
-    }, [])
+      };
+    }, [categoryId])
   );
 
-  const onDataChanged = (category: string) => {
-    setCategory(category);
+  const onDataChanged = (nextCategoryId: string) => {
+    setCategoryId(nextCategoryId);
   };
 
   return (
@@ -53,7 +56,7 @@ const Page = () => {
         }}
       />
       <ListingsMap listings={geoItems} />
-      <ListingsBottomSheet listings={items} category={category} />
+      <ListingsBottomSheet listings={items} category={categoryId} />
     </View>
   );
 };

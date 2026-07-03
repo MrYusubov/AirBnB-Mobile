@@ -1,7 +1,19 @@
-import { useLocalSearchParams, useNavigation } from 'expo-router';
-import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import { Alert, View, Text, StyleSheet, Image, Dimensions, TouchableOpacity, Share } from 'react-native';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import {
+  Alert,
+  FlatList,
+  Modal,
+  View,
+  Text,
+  StyleSheet,
+  Image,
+  Dimensions,
+  TouchableOpacity,
+  Share,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import MapView, { Marker } from 'react-native-maps';
 import Colors from '@/constants/Colors';
 import Animated, {
   SlideInDown,
@@ -13,6 +25,7 @@ import Animated, {
 import { defaultStyles } from '@/constants/Styles';
 import { getListingById, isListingWishlisted, Listing, toggleWishlist } from '@/lib/database/listings';
 import { useUser } from '@clerk/clerk-expo';
+import ListingReviews from '@/components/ListingReviews';
 
 const { width } = Dimensions.get('window');
 const IMG_HEIGHT = 300;
@@ -20,10 +33,13 @@ const IMG_HEIGHT = 300;
 const DetailsPage = () => {
   const { id } = useLocalSearchParams();
   const listingId = Array.isArray(id) ? id[0] : id;
+  const router = useRouter();
   const { user } = useUser();
   const [listing, setListing] = useState<Listing | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWishlisted, setIsWishlisted] = useState(false);
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
   const navigation = useNavigation();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollViewOffset(scrollRef);
@@ -56,6 +72,24 @@ const DetailsPage = () => {
     const nextValue = await toggleWishlist(user.id, listingId);
     setIsWishlisted(nextValue);
   }, [listingId, user?.id]);
+
+  const onReserve = useCallback(() => {
+    if (!listingId) {
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Login required', 'Please log in before reserving this home.');
+      return;
+    }
+
+    router.push({
+      pathname: '/(modals)/reserve',
+      params: {
+        listingId,
+      },
+    });
+  }, [listingId, router, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -134,7 +168,9 @@ const DetailsPage = () => {
         </View>
       ),
       headerLeft: () => (
-        <TouchableOpacity style={styles.roundButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity
+          style={[styles.roundButton, styles.backButton]}
+          onPress={() => navigation.goBack()}>
           <Ionicons name="chevron-back" size={24} color={'#000'} />
         </TouchableOpacity>
       ),
@@ -164,6 +200,31 @@ const DetailsPage = () => {
     };
   }, []);
 
+  const galleryImages = useMemo(() => {
+    if (!listing) {
+      return [];
+    }
+
+    const candidates = [
+      ...(listing.image_urls ?? []),
+      listing.xl_picture_url,
+      listing.medium_url,
+    ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+    return [...new Set(candidates)];
+  }, [listing]);
+
+  const mainImage = galleryImages[0];
+  const latitude = Number(listing?.latitude);
+  const longitude = Number(listing?.longitude);
+  const hasLocation = Number.isFinite(latitude) && Number.isFinite(longitude);
+  const locationRegion = {
+    latitude: hasLocation ? latitude : 0,
+    longitude: hasLocation ? longitude : 0,
+    latitudeDelta: 0.015,
+    longitudeDelta: 0.015,
+  };
+
   if (isLoading) {
     return (
       <View style={[styles.container, styles.centered]}>
@@ -186,11 +247,34 @@ const DetailsPage = () => {
         contentContainerStyle={{ paddingBottom: 100 }}
         ref={scrollRef}
         scrollEventThrottle={16}>
-        <Animated.Image
-          source={{ uri: listing.xl_picture_url }}
-          style={[styles.image, imageAnimatedStyle]}
-          resizeMode="cover"
-        />
+        <TouchableOpacity
+          activeOpacity={0.92}
+          onPress={() => {
+            if (galleryImages.length > 0) {
+              setGalleryIndex(0);
+              setIsGalleryOpen(true);
+            }
+          }}>
+          {mainImage ? (
+            <Animated.Image
+              source={{ uri: mainImage }}
+              style={[styles.image, imageAnimatedStyle]}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={[styles.image, styles.imagePlaceholder]}>
+              <Ionicons name="image-outline" size={42} color={Colors.grey} />
+            </View>
+          )}
+          {galleryImages.length > 0 && (
+            <View style={styles.photoBadge}>
+              <Ionicons name="images-outline" size={16} color="#fff" />
+              <Text style={styles.photoBadgeText}>
+                {galleryImages.length > 1 ? `${galleryImages.length} photos` : 'View photo'}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
 
         <View style={styles.infoContainer}>
           <Text style={styles.name}>{listing.name}</Text>
@@ -221,8 +305,62 @@ const DetailsPage = () => {
           <View style={styles.divider} />
 
           <Text style={styles.description}>{listing.description}</Text>
+
+          <View style={styles.divider} />
+
+          <Text style={styles.sectionTitle}>Where you'll be</Text>
+          {hasLocation ? (
+            <>
+              <View style={styles.mapCard}>
+                <MapView
+                  style={StyleSheet.absoluteFillObject}
+                  initialRegion={locationRegion}
+                  scrollEnabled={false}
+                  zoomEnabled={false}
+                  pitchEnabled={false}
+                  rotateEnabled={false}>
+                  <Marker coordinate={{ latitude, longitude }} />
+                </MapView>
+              </View>
+              <Text style={styles.mapAddress}>{listing.smart_location}</Text>
+            </>
+          ) : (
+            <Text style={styles.mapAddress}>Location is not available for this home yet.</Text>
+          )}
+
+          <View style={styles.divider} />
+          <ListingReviews listingId={listing.id} />
         </View>
       </Animated.ScrollView>
+
+      <Modal
+        visible={isGalleryOpen}
+        animationType="fade"
+        onRequestClose={() => setIsGalleryOpen(false)}>
+        <View style={styles.galleryContainer}>
+          <TouchableOpacity style={styles.galleryClose} onPress={() => setIsGalleryOpen(false)}>
+            <Ionicons name="close-outline" size={30} color="#fff" />
+          </TouchableOpacity>
+          <FlatList
+            data={galleryImages}
+            keyExtractor={(item, index) => `${item}-${index}`}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(event) => {
+              setGalleryIndex(Math.round(event.nativeEvent.contentOffset.x / width));
+            }}
+            renderItem={({ item }) => (
+              <View style={[styles.gallerySlide, { width }]}>
+                <Image source={{ uri: item }} style={styles.galleryImage} resizeMode="contain" />
+              </View>
+            )}
+          />
+          <Text style={styles.galleryCounter}>
+            {galleryImages.length > 0 ? `${galleryIndex + 1} / ${galleryImages.length}` : ''}
+          </Text>
+        </View>
+      </Modal>
 
       <Animated.View style={defaultStyles.footer} entering={SlideInDown.delay(200)}>
         <View
@@ -232,7 +370,9 @@ const DetailsPage = () => {
             <Text>night</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[defaultStyles.btn, { paddingRight: 20, paddingLeft: 20 }]}>
+          <TouchableOpacity
+            style={[defaultStyles.btn, { paddingRight: 20, paddingLeft: 20 }]}
+            onPress={onReserve}>
             <Text style={defaultStyles.btnText}>Reserve</Text>
           </TouchableOpacity>
         </View>
@@ -253,6 +393,28 @@ const styles = StyleSheet.create({
   image: {
     height: IMG_HEIGHT,
     width: width,
+  },
+  imagePlaceholder: {
+    backgroundColor: '#eeeeee',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoBadge: {
+    position: 'absolute',
+    right: 18,
+    bottom: 18,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  photoBadgeText: {
+    fontFamily: 'mon-sb',
+    color: '#fff',
+    fontSize: 12,
   },
   infoContainer: {
     padding: 24,
@@ -306,19 +468,27 @@ const styles = StyleSheet.create({
     fontFamily: 'mon-sb',
   },
   roundButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 50,
-    backgroundColor: 'white',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
     alignItems: 'center',
     justifyContent: 'center',
     color: Colors.primary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0, 0, 0, 0.08)',
+  },
+  backButton: {
+    marginLeft: 8,
   },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
+    gap: 12,
+    paddingRight: 8,
+    paddingVertical: 8,
+    paddingLeft: 8,
   },
   header: {
     backgroundColor: '#fff',
@@ -331,6 +501,62 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 10,
     fontFamily: 'mon',
+    lineHeight: 24,
+  },
+  sectionTitle: {
+    fontFamily: 'mon-b',
+    fontSize: 22,
+    color: Colors.dark,
+  },
+  mapCard: {
+    height: 220,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#eeeeee',
+    marginTop: 14,
+  },
+  mapAddress: {
+    fontFamily: 'mon',
+    color: Colors.grey,
+    marginTop: 10,
+    lineHeight: 20,
+  },
+  galleryContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+  },
+  galleryClose: {
+    position: 'absolute',
+    top: 52,
+    right: 18,
+    zIndex: 2,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gallerySlide: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  galleryImage: {
+    width: '100%',
+    height: '82%',
+  },
+  galleryCounter: {
+    position: 'absolute',
+    bottom: 44,
+    alignSelf: 'center',
+    fontFamily: 'mon-sb',
+    color: '#fff',
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
   },
 });
 

@@ -7,52 +7,43 @@ import {
   TouchableOpacity,
   type View as ViewInstance,
 } from 'react-native';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Colors from '@/constants/Colors';
 import { Ionicons } from '@expo/vector-icons';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { Link } from 'expo-router';
-
-const categories = [
-  {
-    name: 'Tiny homes',
-    icon: 'home',
-  },
-  {
-    name: 'Cabins',
-    icon: 'house-siding',
-  },
-  {
-    name: 'Trending',
-    icon: 'local-fire-department',
-  },
-  {
-    name: 'Play',
-    icon: 'videogame-asset',
-  },
-  {
-    name: 'City',
-    icon: 'apartment',
-  },
-  {
-    name: 'Beachfront',
-    icon: 'beach-access',
-  },
-  {
-    name: 'Countryside',
-    icon: 'nature-people',
-  },
-];
+import { Category, getCategories } from '@/lib/database/listings';
 
 interface Props {
-  onCategoryChanged: (category: string) => void;
+  onCategoryChanged: (categoryId: string) => void;
 }
 
 const ExploreHeader = ({ onCategoryChanged }: Props) => {
   const scrollRef = useRef<ScrollView>(null);
   const itemsRef = useRef<Array<ViewInstance | null>>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadCategories = async () => {
+      const nextCategories = await getCategories();
+
+      if (isMounted) {
+        setCategories(nextCategories);
+      }
+    };
+
+    loadCategories().catch((error) => {
+      console.error('Failed to load categories from SQLite', error);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const selectCategory = (index: number) => {
     const selected = itemsRef.current[index];
@@ -61,7 +52,7 @@ const ExploreHeader = ({ onCategoryChanged }: Props) => {
       scrollRef.current?.scrollTo({ x: x - 16, y: 0, animated: true });
     });
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onCategoryChanged(categories[index].name);
+    onCategoryChanged(categories[index].id);
   };
 
   return (
@@ -98,7 +89,7 @@ const ExploreHeader = ({ onCategoryChanged }: Props) => {
               ref={(el) => {
                 itemsRef.current[index] = el;
               }}
-              key={index}
+              key={item.id}
               style={activeIndex === index ? styles.categoriesBtnActive : styles.categoriesBtn}
               onPress={() => selectCategory(index)}>
               <MaterialIcons
@@ -107,7 +98,7 @@ const ExploreHeader = ({ onCategoryChanged }: Props) => {
                 color={activeIndex === index ? '#000' : Colors.grey}
               />
               <Text style={activeIndex === index ? styles.categoryTextActive : styles.categoryText}>
-                {item.name}
+                {item.title}
               </Text>
             </TouchableOpacity>
           ))}
