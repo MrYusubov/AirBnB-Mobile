@@ -6,7 +6,10 @@ export type CloudinaryUploadResult = {
   secure_url: string;
 };
 
-export const uploadImageToCloudinary = async (uri: string): Promise<CloudinaryUploadResult> => {
+export const uploadImageToCloudinary = async (
+  uri: string,
+  folder = 'airbnb-mobile/listings'
+): Promise<CloudinaryUploadResult> => {
   if (!CLOUDINARY_UPLOAD_PRESET) {
     throw new Error('EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET is not configured');
   }
@@ -22,7 +25,7 @@ export const uploadImageToCloudinary = async (uri: string): Promise<CloudinaryUp
     type,
   } as any);
   formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-  formData.append('folder', 'airbnb-mobile/listings');
+  formData.append('folder', folder);
 
   const response = await fetch(
     `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`,

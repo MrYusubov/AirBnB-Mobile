@@ -23,7 +23,13 @@ import Animated, {
   useScrollViewOffset,
 } from 'react-native-reanimated';
 import { defaultStyles } from '@/constants/Styles';
-import { getListingById, isListingWishlisted, Listing, toggleWishlist } from '@/lib/database/listings';
+import {
+  getListingById,
+  getOrCreateConversationForListing,
+  isListingWishlisted,
+  Listing,
+  toggleWishlist,
+} from '@/lib/database/listings';
 import { useUser } from '@clerk/clerk-expo';
 import ListingReviews from '@/components/ListingReviews';
 
@@ -90,6 +96,34 @@ const DetailsPage = () => {
       },
     });
   }, [listingId, router, user?.id]);
+
+  const onMessageHost = useCallback(async () => {
+    if (!listing) {
+      return;
+    }
+
+    if (!user?.id) {
+      Alert.alert('Login required', 'Please log in before messaging this host.');
+      return;
+    }
+
+    try {
+      const conversation = await getOrCreateConversationForListing({
+        listing,
+        guestUserId: user.id,
+        guestName: user.fullName ?? user.firstName ?? 'Guest',
+      });
+
+      router.push({
+        pathname: '/chat/[id]',
+        params: {
+          id: conversation.id,
+        },
+      });
+    } catch (error) {
+      Alert.alert('Could not open chat', error instanceof Error ? error.message : 'Try again');
+    }
+  }, [listing, router, user]);
 
   useEffect(() => {
     let isMounted = true;
@@ -294,12 +328,24 @@ const DetailsPage = () => {
           <View style={styles.divider} />
 
           <View style={styles.hostView}>
-            <Image source={{ uri: listing.host_picture_url }} style={styles.host} />
+            {listing.host_picture_url ? (
+              <Image source={{ uri: listing.host_picture_url }} style={styles.host} />
+            ) : (
+              <View style={[styles.host, styles.hostPlaceholder]}>
+                <Ionicons name="person-outline" size={24} color={Colors.grey} />
+              </View>
+            )}
 
-            <View>
-              <Text style={{ fontWeight: '500', fontSize: 16 }}>Hosted by {listing.host_name}</Text>
-              <Text>Host since {listing.host_since}</Text>
+            <View style={styles.hostInfo}>
+              <Text style={{ fontWeight: '500', fontSize: 16 }}>
+                Hosted by {listing.host_name ?? listing.owner_email ?? 'Host'}
+              </Text>
+              <Text>{listing.host_since ? `Host since ${listing.host_since}` : 'New host'}</Text>
             </View>
+            <TouchableOpacity style={styles.messageHostButton} onPress={onMessageHost}>
+              <Ionicons name="chatbubble-ellipses-outline" size={17} color="#fff" />
+              <Text style={styles.messageHostText}>Message host</Text>
+            </TouchableOpacity>
           </View>
 
           <View style={styles.divider} />
@@ -451,10 +497,32 @@ const styles = StyleSheet.create({
     borderRadius: 50,
     backgroundColor: Colors.grey,
   },
+  hostPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f3f3',
+  },
   hostView: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  hostInfo: {
+    flex: 1,
+  },
+  messageHostButton: {
+    height: 38,
+    borderRadius: 19,
+    paddingHorizontal: 12,
+    backgroundColor: Colors.dark,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  messageHostText: {
+    fontFamily: 'mon-sb',
+    color: '#fff',
+    fontSize: 12,
   },
   footerText: {
     height: '100%',

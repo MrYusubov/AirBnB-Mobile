@@ -24,7 +24,7 @@ export type AppUser = {
   image_url: string | null;
 };
 
-export type BookingStatus = 'pending' | 'paid' | 'cancelled';
+export type BookingStatus = 'pending' | 'paid' | 'accepted' | 'cancelled';
 
 export type Booking = {
   id: string;
@@ -38,6 +38,28 @@ export type Booking = {
   status: BookingStatus;
   paid_at: string | null;
   created_at: string;
+};
+
+export type HostReservation = Booking & {
+  listing_name: string | null;
+  listing_image_url: string | null;
+  guest_name: string | null;
+  guest_email: string | null;
+};
+
+export type BookingDateRange = {
+  id: string;
+  check_in: string;
+  check_out: string;
+  status: BookingStatus;
+};
+
+export type UserTrip = Booking & {
+  listing: Listing;
+  review_id: string | null;
+  review_rating: number | null;
+  review_comment: string | null;
+  review_created_at: string | null;
 };
 
 export type CreateBookingInput = {
@@ -68,6 +90,30 @@ export type ReviewStats = {
   distribution: Record<1 | 2 | 3 | 4 | 5, number>;
 };
 
+export type Conversation = {
+  id: string;
+  listing_id: string;
+  guest_user_id: string;
+  host_user_id: string;
+  guest_name: string | null;
+  host_name: string | null;
+  listing_name: string | null;
+  listing_image_url: string | null;
+  last_message: string | null;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Message = {
+  id: string;
+  conversation_id: string;
+  sender_user_id: string;
+  body: string;
+  created_at: string;
+  read_at: string | null;
+};
+
 type ListingRow = {
   data: string;
   status: ListingStatus;
@@ -81,6 +127,22 @@ type ListingRow = {
 
 type BookingRow = Booking;
 type ReviewRow = Review;
+type ConversationRow = Conversation;
+type MessageRow = Message;
+type UserTripRow = Booking & {
+  listing_data: string;
+  listing_status: ListingStatus;
+  category_id: string | null;
+  category_title?: string | null;
+  owner_user_id: string | null;
+  owner_email: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  review_id: string | null;
+  review_rating: number | null;
+  review_comment: string | null;
+  review_created_at: string | null;
+};
 
 type TableColumn = {
   name: string;
@@ -193,7 +255,7 @@ const parseJsonArray = (value: unknown) => {
   }
 };
 
-const parseListingRow = (row: ListingRow) => {
+const parseListingRow = (row: ListingRow): Listing => {
   const listing = JSON.parse(row.data) as Listing;
 
   return {
@@ -421,6 +483,37 @@ export const initializeListingsDatabase = async () => {
       CREATE INDEX IF NOT EXISTS reviews_listing_idx ON reviews(listing_id);
       CREATE INDEX IF NOT EXISTS reviews_user_idx ON reviews(user_id);
 
+      CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY NOT NULL,
+        listing_id TEXT NOT NULL,
+        guest_user_id TEXT NOT NULL,
+        host_user_id TEXT NOT NULL,
+        guest_name TEXT,
+        host_name TEXT,
+        listing_name TEXT,
+        listing_image_url TEXT,
+        last_message TEXT,
+        last_message_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(listing_id, guest_user_id, host_user_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS conversations_guest_idx ON conversations(guest_user_id);
+      CREATE INDEX IF NOT EXISTS conversations_host_idx ON conversations(host_user_id);
+      CREATE INDEX IF NOT EXISTS conversations_listing_idx ON conversations(listing_id);
+
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        conversation_id TEXT NOT NULL,
+        sender_user_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        read_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages(conversation_id, created_at);
+
       CREATE TABLE IF NOT EXISTS destinations (
         id TEXT PRIMARY KEY NOT NULL,
         title TEXT NOT NULL,
@@ -542,6 +635,29 @@ export const getListings = async (status: ListingStatus = 'accepted', categoryId
 
 export const getPendingListings = () => getListings('pending');
 
+export const getHostListings = async (ownerUserId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<ListingRow>(
+    `SELECT listings.data,
+      listings.status,
+      listings.category_id,
+      categories.title as category_title,
+      listings.owner_user_id,
+      listings.owner_email,
+      listings.latitude,
+      listings.longitude
+    FROM listings
+    LEFT JOIN categories ON categories.id = listings.category_id
+    WHERE listings.owner_user_id = ?
+    ORDER BY listings.updated_at DESC`,
+    [ownerUserId]
+  );
+
+  return rows.map(parseListingRow);
+};
+
 export const getListingById = async (id: string) => {
   await initializeListingsDatabase();
 
@@ -598,7 +714,50 @@ export const deleteListing = async (id: string) => {
   await db.runAsync('DELETE FROM wishlists WHERE listing_id = ?', [id]);
   await db.runAsync('DELETE FROM reviews WHERE listing_id = ?', [id]);
   await db.runAsync('DELETE FROM bookings WHERE listing_id = ?', [id]);
+  const conversationRows = await db.getAllAsync<{ id: string }>(
+    'SELECT id FROM conversations WHERE listing_id = ?',
+    [id]
+  );
+  for (const conversation of conversationRows) {
+    await db.runAsync('DELETE FROM messages WHERE conversation_id = ?', [conversation.id]);
+  }
+  await db.runAsync('DELETE FROM conversations WHERE listing_id = ?', [id]);
   await db.runAsync('DELETE FROM listings WHERE id = ?', [id]);
+};
+
+export const deleteHostListing = async (id: string, ownerUserId: string) => {
+  const listing = await getListingById(id);
+
+  if (!listing) {
+    throw new Error('House not found.');
+  }
+
+  if (listing.owner_user_id !== ownerUserId) {
+    throw new Error('You can only delete your own houses.');
+  }
+
+  await deleteListing(id);
+};
+
+export const updateListingPrice = async (id: string, ownerUserId: string, price: number) => {
+  if (!Number.isFinite(price) || price < 0) {
+    throw new Error('Enter a valid price.');
+  }
+
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const listing = await getListingById(id);
+
+  if (!listing) {
+    throw new Error('House not found.');
+  }
+
+  if (listing.owner_user_id !== ownerUserId) {
+    throw new Error('You can only edit your own houses.');
+  }
+
+  return writeListing(db, { ...listing, price });
 };
 
 export const getWishlistListingIds = async (userId: string) => {
@@ -682,6 +841,26 @@ export const createBooking = async (input: CreateBookingInput) => {
   await initializeListingsDatabase();
 
   const db = await getDatabase();
+
+  if (new Date(`${input.check_out}T00:00:00`) <= new Date(`${input.check_in}T00:00:00`)) {
+    throw new Error('Check-out must be after check-in.');
+  }
+
+  const conflictingBooking = await db.getFirstAsync<{ id: string }>(
+    `SELECT id
+    FROM bookings
+    WHERE listing_id = ?
+      AND status IN ('pending', 'accepted', 'paid')
+      AND date(check_in) < date(?)
+      AND date(check_out) > date(?)
+    LIMIT 1`,
+    [input.listing_id, input.check_out, input.check_in]
+  );
+
+  if (conflictingBooking) {
+    throw new Error('These dates are already reserved. Please choose another date range.');
+  }
+
   const booking: Booking = {
     id: createId(),
     user_id: input.user_id,
@@ -691,8 +870,8 @@ export const createBooking = async (input: CreateBookingInput) => {
     adults: input.adults,
     children: input.children,
     total_price: input.total_price,
-    status: input.status ?? 'paid',
-    paid_at: (input.status ?? 'paid') === 'paid' ? new Date().toISOString() : null,
+    status: input.status ?? 'pending',
+    paid_at: ['paid', 'accepted'].includes(input.status ?? 'pending') ? new Date().toISOString() : null,
     created_at: new Date().toISOString(),
   };
 
@@ -727,6 +906,151 @@ export const createBooking = async (input: CreateBookingInput) => {
   );
 
   return booking;
+};
+
+export const getUnavailableDateRanges = async (listingId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getAllAsync<BookingDateRange>(
+    `SELECT id, check_in, check_out, status
+    FROM bookings
+    WHERE listing_id = ?
+      AND status IN ('pending', 'accepted', 'paid')
+    ORDER BY check_in ASC`,
+    [listingId]
+  );
+};
+
+export const getHostReservations = async (hostUserId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getAllAsync<HostReservation>(
+    `SELECT bookings.id,
+      bookings.user_id,
+      bookings.listing_id,
+      bookings.check_in,
+      bookings.check_out,
+      bookings.adults,
+      bookings.children,
+      bookings.total_price,
+      bookings.status,
+      bookings.paid_at,
+      bookings.created_at,
+      listings.name as listing_name,
+      COALESCE(listings.medium_url, listings.xl_picture_url) as listing_image_url,
+      NULLIF(TRIM(COALESCE(users.first_name, '') || ' ' || COALESCE(users.last_name, '')), '') as guest_name,
+      users.email as guest_email
+    FROM bookings
+    INNER JOIN listings ON listings.id = bookings.listing_id
+    LEFT JOIN users ON users.id = bookings.user_id
+    WHERE listings.owner_user_id = ?
+    ORDER BY
+      CASE bookings.status
+        WHEN 'pending' THEN 0
+        WHEN 'accepted' THEN 1
+        WHEN 'paid' THEN 1
+        ELSE 2
+      END,
+      bookings.created_at DESC`,
+    [hostUserId]
+  );
+};
+
+export const updateBookingStatus = async (
+  bookingId: string,
+  status: Extract<BookingStatus, 'accepted' | 'cancelled'>
+) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const paidAt = status === 'accepted' ? new Date().toISOString() : null;
+
+  await db.runAsync(
+    `UPDATE bookings
+    SET status = ?,
+      paid_at = CASE
+        WHEN ? = 'accepted' THEN COALESCE(paid_at, ?)
+        ELSE paid_at
+      END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+    [status, status, paidAt, bookingId]
+  );
+};
+
+export const getCompletedTripsForUser = async (userId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const today = new Date().toISOString().slice(0, 10);
+  const rows = await db.getAllAsync<UserTripRow>(
+    `SELECT bookings.id,
+      bookings.user_id,
+      bookings.listing_id,
+      bookings.check_in,
+      bookings.check_out,
+      bookings.adults,
+      bookings.children,
+      bookings.total_price,
+      bookings.status,
+      bookings.paid_at,
+      bookings.created_at,
+      listings.data as listing_data,
+      listings.status as listing_status,
+      listings.category_id,
+      categories.title as category_title,
+      listings.owner_user_id,
+      listings.owner_email,
+      listings.latitude,
+      listings.longitude,
+      reviews.id as review_id,
+      reviews.rating as review_rating,
+      reviews.comment as review_comment,
+      reviews.created_at as review_created_at
+    FROM bookings
+    INNER JOIN listings ON listings.id = bookings.listing_id
+    LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN reviews ON reviews.booking_id = bookings.id
+    WHERE bookings.user_id = ?
+      AND bookings.status IN ('accepted', 'paid')
+      AND date(bookings.check_out) <= date(?)
+    ORDER BY bookings.check_out DESC, bookings.created_at DESC`,
+    [userId, today]
+  );
+
+  return rows.map((row): UserTrip => {
+    const listing = parseListingRow({
+      data: row.listing_data,
+      status: row.listing_status,
+      category_id: row.category_id,
+      category_title: row.category_title,
+      owner_user_id: row.owner_user_id,
+      owner_email: row.owner_email,
+      latitude: row.latitude,
+      longitude: row.longitude,
+    });
+
+    return {
+      id: row.id,
+      user_id: row.user_id,
+      listing_id: row.listing_id,
+      check_in: row.check_in,
+      check_out: row.check_out,
+      adults: row.adults,
+      children: row.children,
+      total_price: row.total_price,
+      status: row.status,
+      paid_at: row.paid_at,
+      created_at: row.created_at,
+      listing,
+      review_id: row.review_id,
+      review_rating: row.review_rating,
+      review_comment: row.review_comment,
+      review_created_at: row.review_created_at,
+    };
+  });
 };
 
 export const getListingReviews = async (listingId: string, limit = 5, offset = 0) => {
@@ -795,7 +1119,7 @@ export const getReviewEligibility = async (userId: string, listingId: string) =>
     LEFT JOIN reviews ON reviews.booking_id = bookings.id
     WHERE bookings.user_id = ?
       AND bookings.listing_id = ?
-      AND bookings.status = 'paid'
+      AND bookings.status IN ('paid', 'accepted')
       AND date(bookings.check_out) <= date(?)
       AND reviews.id IS NULL
     ORDER BY bookings.check_out DESC
@@ -837,7 +1161,7 @@ export const addReview = async (input: {
     WHERE id = ?
       AND user_id = ?
       AND listing_id = ?
-      AND status = 'paid'
+      AND status IN ('paid', 'accepted')
       AND date(check_out) <= date(?)
     LIMIT 1`,
     [input.bookingId, input.userId, input.listingId, today]
@@ -883,6 +1207,235 @@ export const addReview = async (input: {
 
   await refreshListingReviewSummary(db, input.listingId);
   return review;
+};
+
+export const getOrCreateConversationForListing = async (input: {
+  listing: Listing;
+  guestUserId: string;
+  guestName: string | null;
+}) => {
+  await initializeListingsDatabase();
+
+  if (!input.listing.owner_user_id) {
+    throw new Error('This host is not available for messaging yet.');
+  }
+
+  if (input.listing.owner_user_id === input.guestUserId) {
+    throw new Error('This is your own house.');
+  }
+
+  const db = await getDatabase();
+  const existing = await db.getFirstAsync<ConversationRow>(
+    `SELECT id,
+      listing_id,
+      guest_user_id,
+      host_user_id,
+      guest_name,
+      host_name,
+      listing_name,
+      listing_image_url,
+      last_message,
+      last_message_at,
+      created_at,
+      updated_at
+    FROM conversations
+    WHERE listing_id = ? AND guest_user_id = ? AND host_user_id = ?
+    LIMIT 1`,
+    [input.listing.id, input.guestUserId, input.listing.owner_user_id]
+  );
+
+  if (existing) {
+    await db.runAsync(
+      `UPDATE conversations
+      SET guest_name = ?,
+        host_name = ?,
+        listing_name = ?,
+        listing_image_url = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`,
+      [
+        input.guestName,
+        input.listing.host_name ?? input.listing.owner_email ?? 'Host',
+        input.listing.name,
+        input.listing.image_urls?.[0] ?? input.listing.medium_url ?? input.listing.xl_picture_url ?? null,
+        existing.id,
+      ]
+    );
+
+    return {
+      ...existing,
+      guest_name: input.guestName,
+      host_name: input.listing.host_name ?? input.listing.owner_email ?? 'Host',
+      listing_name: input.listing.name,
+      listing_image_url: input.listing.image_urls?.[0] ?? input.listing.medium_url ?? input.listing.xl_picture_url ?? null,
+    };
+  }
+
+  const conversation: Conversation = {
+    id: createId(),
+    listing_id: input.listing.id,
+    guest_user_id: input.guestUserId,
+    host_user_id: input.listing.owner_user_id,
+    guest_name: input.guestName,
+    host_name: input.listing.host_name ?? input.listing.owner_email ?? 'Host',
+    listing_name: input.listing.name,
+    listing_image_url: input.listing.image_urls?.[0] ?? input.listing.medium_url ?? input.listing.xl_picture_url ?? null,
+    last_message: null,
+    last_message_at: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  await db.runAsync(
+    `INSERT INTO conversations (
+      id,
+      listing_id,
+      guest_user_id,
+      host_user_id,
+      guest_name,
+      host_name,
+      listing_name,
+      listing_image_url,
+      last_message,
+      last_message_at,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      conversation.id,
+      conversation.listing_id,
+      conversation.guest_user_id,
+      conversation.host_user_id,
+      conversation.guest_name,
+      conversation.host_name,
+      conversation.listing_name,
+      conversation.listing_image_url,
+      conversation.last_message,
+      conversation.last_message_at,
+      conversation.created_at,
+      conversation.updated_at,
+    ]
+  );
+
+  return conversation;
+};
+
+export const getConversationsForUser = async (userId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getAllAsync<ConversationRow>(
+    `SELECT id,
+      listing_id,
+      guest_user_id,
+      host_user_id,
+      guest_name,
+      host_name,
+      listing_name,
+      listing_image_url,
+      last_message,
+      last_message_at,
+      created_at,
+      updated_at
+    FROM conversations
+    WHERE guest_user_id = ? OR host_user_id = ?
+    ORDER BY COALESCE(last_message_at, updated_at, created_at) DESC`,
+    [userId, userId]
+  );
+};
+
+export const getConversationById = async (conversationId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getFirstAsync<ConversationRow>(
+    `SELECT id,
+      listing_id,
+      guest_user_id,
+      host_user_id,
+      guest_name,
+      host_name,
+      listing_name,
+      listing_image_url,
+      last_message,
+      last_message_at,
+      created_at,
+      updated_at
+    FROM conversations
+    WHERE id = ?
+    LIMIT 1`,
+    [conversationId]
+  );
+};
+
+export const getMessagesForConversation = async (conversationId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getAllAsync<MessageRow>(
+    `SELECT id, conversation_id, sender_user_id, body, created_at, read_at
+    FROM messages
+    WHERE conversation_id = ?
+    ORDER BY created_at ASC`,
+    [conversationId]
+  );
+};
+
+export const sendMessage = async (input: {
+  conversationId: string;
+  senderUserId: string;
+  body: string;
+}) => {
+  await initializeListingsDatabase();
+
+  const body = input.body.trim();
+  if (!body) {
+    throw new Error('Message cannot be empty.');
+  }
+
+  const db = await getDatabase();
+  const conversation = await getConversationById(input.conversationId);
+
+  if (!conversation) {
+    throw new Error('Conversation not found.');
+  }
+
+  if (conversation.guest_user_id !== input.senderUserId && conversation.host_user_id !== input.senderUserId) {
+    throw new Error('You do not have access to this conversation.');
+  }
+
+  const message: Message = {
+    id: createId(),
+    conversation_id: input.conversationId,
+    sender_user_id: input.senderUserId,
+    body,
+    created_at: new Date().toISOString(),
+    read_at: null,
+  };
+
+  await db.runAsync(
+    `INSERT INTO messages (id, conversation_id, sender_user_id, body, created_at, read_at)
+    VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      message.id,
+      message.conversation_id,
+      message.sender_user_id,
+      message.body,
+      message.created_at,
+      message.read_at,
+    ]
+  );
+
+  await db.runAsync(
+    `UPDATE conversations
+    SET last_message = ?,
+      last_message_at = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`,
+    [message.body, message.created_at, message.conversation_id]
+  );
+
+  return message;
 };
 
 export const getDestinations = async () => {

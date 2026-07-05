@@ -93,9 +93,27 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="listing/[id]" options={{ headerTitle: '' }} />
       <Stack.Screen
+        name="chat/[id]"
+        options={{
+          title: 'Chat',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+        }}
+      />
+      <Stack.Screen
         name="admin/pending-houses"
         options={{
           title: 'Pending houses',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+        }}
+      />
+      <Stack.Screen
+        name="host/manage-houses"
+        options={{
+          title: 'Manage houses',
           headerTitleStyle: {
             fontFamily: 'mon-sb',
           },

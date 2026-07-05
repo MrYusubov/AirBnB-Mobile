@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUser } from '@clerk/clerk-expo';
 import Colors from '@/constants/Colors';
 import { defaultStyles } from '@/constants/Styles';
-import { createBooking } from '@/lib/database/listings';
+import { createBooking, upsertUser } from '@/lib/database/listings';
 
 const asString = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value ?? '');
 const onlyDigits = (value: string) => value.replace(/\D/g, '');
@@ -107,6 +107,13 @@ const PaymentPage = () => {
     setIsPaying(true);
 
     try {
+      await upsertUser({
+        id: user.id,
+        email: user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? null,
+        first_name: user.firstName,
+        last_name: user.lastName,
+        image_url: user.imageUrl,
+      });
       await createBooking({
         user_id: user.id,
         listing_id: listingId,
@@ -115,7 +122,7 @@ const PaymentPage = () => {
         adults,
         children,
         total_price: totalPrice,
-        status: 'paid',
+        status: 'pending',
       });
 
       setIsSuccess(true);
@@ -133,12 +140,12 @@ const PaymentPage = () => {
   if (isSuccess) {
     return (
       <View style={styles.successContainer}>
-        <Stack.Screen options={{ title: 'Payment complete' }} />
+        <Stack.Screen options={{ title: 'Request sent' }} />
         <Animated.View style={[styles.successIcon, { opacity, transform: [{ scale }] }]}>
           <Ionicons name="checkmark" size={58} color="#fff" />
         </Animated.View>
-        <Text style={styles.successTitle}>Payment successful</Text>
-        <Text style={styles.successText}>Your reservation is confirmed. Taking you home...</Text>
+        <Text style={styles.successTitle}>Reservation request sent</Text>
+        <Text style={styles.successText}>The host can now accept or cancel it. Taking you home...</Text>
       </View>
     );
   }

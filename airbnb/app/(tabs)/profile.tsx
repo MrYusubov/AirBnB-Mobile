@@ -1,260 +1,712 @@
-import {
-  View,
-  Text,
-  Button,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  Image,
-  TouchableOpacity,
-  TextInput,
-} from 'react-native';
-import React, { useEffect, useState } from 'react';
-import { useAuth, useUser } from '@clerk/clerk-expo';
-import { defaultStyles } from '@/constants/Styles';
-import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
-import { Link, useRouter } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
-import { ADMIN_EMAIL, useIsAdmin } from '@/lib/admin';
+import { defaultStyles } from '@/constants/Styles';
+import { uploadImageToCloudinary } from '@/lib/cloudinary';
+import { useIsAdmin } from '@/lib/admin';
 import { upsertUser } from '@/lib/database/listings';
+import { useAuth, useUser } from '@clerk/clerk-expo';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-const Page = () => {
+type ProfileMetadata = {
+  profileImageUrl?: unknown;
+  profileImagePublicId?: unknown;
+};
+
+const getErrorMessage = (error: unknown) => {
+  const clerkError = error as { errors?: { message?: string }[]; message?: string };
+  return clerkError.errors?.[0]?.message ?? clerkError.message ?? 'Please try again.';
+};
+
+const getCustomProfileImageUrl = (metadata: unknown) => {
+  const profileMetadata = metadata as ProfileMetadata;
+  return typeof profileMetadata?.profileImageUrl === 'string' ? profileMetadata.profileImageUrl : null;
+};
+
+const getProviderNames = (user: ReturnType<typeof useUser>['user']) => {
+  const providers = user?.externalAccounts
+    ?.map((account) => account.providerTitle?.() ?? account.provider)
+    .filter(Boolean);
+
+  if (!providers?.length) {
+    return 'social platform';
+  }
+
+  return providers.join(', ');
+};
+
+const ProfilePage = () => {
   const { signOut, isSignedIn } = useAuth();
   const { user } = useUser();
+  const { isAdmin } = useIsAdmin();
   const router = useRouter();
-  const [firstName, setFirstName] = useState(user?.firstName);
-  const [lastName, setLastName] = useState(user?.lastName);
-  const [email, setEmail] = useState(user?.emailAddresses[0].emailAddress);
-  const [edit, setEdit] = useState(false);
-  const { email: authEmail, isAdmin } = useIsAdmin();
 
-  // Load user data on mount
+  const customAvatar = getCustomProfileImageUrl(user?.unsafeMetadata);
+  const currentAvatarUrl = customAvatar ?? user?.imageUrl ?? '';
+  const currentEmail = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses[0]?.emailAddress ?? '';
+  const providerNames = useMemo(() => getProviderNames(user), [user]);
+
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [username, setUsername] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  const passwordRules = useMemo(
+    () => [
+      { label: 'Minimum 6 characters', isValid: newPassword.length >= 6 },
+      { label: 'At least 1 uppercase letter', isValid: /[A-Z]/.test(newPassword) },
+      { label: 'At least 1 number', isValid: /\d/.test(newPassword) },
+      { label: 'At least 1 symbol', isValid: /[^A-Za-z0-9]/.test(newPassword) },
+    ],
+    [newPassword]
+  );
+  const isPasswordValid = passwordRules.every((rule) => rule.isValid);
+
   useEffect(() => {
     if (!user) {
       return;
     }
 
-    setFirstName(user.firstName);
-    setLastName(user.lastName);
-    setEmail(user.emailAddresses[0].emailAddress);
+    const nextAvatarUrl = getCustomProfileImageUrl(user.unsafeMetadata) ?? user.imageUrl;
+
+    setFirstName(user.firstName ?? '');
+    setLastName(user.lastName ?? '');
+    setUsername(user.username ?? '');
+    setAvatarUrl(nextAvatarUrl);
+
     upsertUser({
       id: user.id,
       email: user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? null,
       first_name: user.firstName,
       last_name: user.lastName,
-      image_url: user.imageUrl,
+      image_url: nextAvatarUrl,
     }).catch((error) => {
       console.log('Failed to sync user to SQLite', error);
     });
   }, [user]);
 
-  // Update Clerk user data
-  const onSaveUser = async () => {
-    try {
-      await user?.update({
-        firstName: firstName!,
-        lastName: lastName!,
-      });
-    } catch (error) {
-      console.log(error);
-    } finally {
-      setEdit(false);
+  const syncUserToDatabase = async (imageUrl = avatarUrl) => {
+    if (!user) {
+      return;
     }
+
+    await upsertUser({
+      id: user.id,
+      email: user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? null,
+      first_name: firstName.trim() || null,
+      last_name: lastName.trim() || null,
+      image_url: imageUrl || user.imageUrl,
+    });
   };
 
-  // Capture image from camera roll
-  // Upload to Clerk as avatar
-  const onCaptureImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
+  const onUploadAvatar = async () => {
+    if (!user) {
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
-      quality: 0.75,
-      base64: true,
+      aspect: [1, 1],
+      quality: 0.82,
     });
 
-    if (!result.canceled) {
-      const base64 = `data:image/png;base64,${result.assets[0].base64}`;
-      user?.setProfileImage({
-        file: base64,
+    if (result.canceled) {
+      return;
+    }
+
+    try {
+      setIsUploadingAvatar(true);
+      const uploadedImage = await uploadImageToCloudinary(result.assets[0].uri, 'airbnb-mobile/profiles');
+      const nextUnsafeMetadata = {
+        ...(user.unsafeMetadata as Record<string, unknown>),
+        profileImageUrl: uploadedImage.secure_url,
+        profileImagePublicId: uploadedImage.public_id,
+      };
+
+      await user.update({
+        unsafeMetadata: nextUnsafeMetadata,
       });
+
+      setAvatarUrl(uploadedImage.secure_url);
+      await syncUserToDatabase(uploadedImage.secure_url);
+      Alert.alert('Profile photo updated', 'Your new photo was uploaded successfully.');
+    } catch (error) {
+      Alert.alert('Could not update photo', getErrorMessage(error));
+    } finally {
+      setIsUploadingAvatar(false);
     }
   };
 
+  const onSaveProfile = async () => {
+    if (!user) {
+      return;
+    }
+
+    const trimmedUsername = username.trim();
+
+    try {
+      setIsSavingProfile(true);
+      await user.update({
+        firstName: firstName.trim() || null,
+        lastName: lastName.trim() || null,
+        username: trimmedUsername || null,
+        unsafeMetadata: {
+          ...(user.unsafeMetadata as Record<string, unknown>),
+          profileImageUrl: avatarUrl || getCustomProfileImageUrl(user.unsafeMetadata) || undefined,
+        },
+      });
+      await syncUserToDatabase();
+      Alert.alert('Profile saved', 'Your profile details were updated.');
+    } catch (error) {
+      Alert.alert('Could not save profile', getErrorMessage(error));
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const onChangePassword = async () => {
+    if (!user) {
+      return;
+    }
+
+    if (!user.passwordEnabled) {
+      Alert.alert(
+        'Password unavailable',
+        `You signed in with ${providerNames}. Password change is not available for this account.`
+      );
+      return;
+    }
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      Alert.alert('Missing info', 'Please fill current password, new password, and confirm password.');
+      return;
+    }
+
+    if (!isPasswordValid) {
+      Alert.alert('Weak password', 'Please complete all password requirements.');
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      Alert.alert('Passwords do not match', 'Please confirm the same new password.');
+      return;
+    }
+
+    try {
+      setIsChangingPassword(true);
+      await user.updatePassword({
+        currentPassword,
+        newPassword,
+        signOutOfOtherSessions: true,
+      });
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      Alert.alert('Password changed', 'Your password was updated successfully.');
+    } catch (error) {
+      Alert.alert('Could not change password', getErrorMessage(error));
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  if (!isSignedIn || !user) {
+    return (
+      <View style={styles.centered}>
+        <Ionicons name="person-circle-outline" size={54} color={Colors.grey} />
+        <Text style={styles.emptyTitle}>Welcome to Airbnb</Text>
+        <Text style={styles.emptyText}>Log in to manage your profile, houses, and reservations.</Text>
+        <TouchableOpacity style={[defaultStyles.btn, styles.fullButton]} onPress={() => router.push('/(modals)/login')}>
+          <Text style={defaultStyles.btnText}>Log In</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
-    <SafeAreaView style={defaultStyles.container}>
-      <ScrollView contentContainerStyle={styles.content} contentInsetAdjustmentBehavior="automatic">
-        <View style={styles.headerContainer}>
-          <Text style={styles.header}>Profile</Text>
-          <Ionicons name="notifications-outline" size={26} />
-        </View>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      contentInsetAdjustmentBehavior="automatic"
+      keyboardShouldPersistTaps="handled">
+      <View style={styles.header}>
+        <Text style={styles.pageTitle}>Profile</Text>
+        <Text style={styles.pageSubtitle}>Manage your account, hosting tools, and security.</Text>
+      </View>
 
-        {user && (
-          <View style={styles.card}>
-            <TouchableOpacity onPress={onCaptureImage}>
-              <Image source={{ uri: user?.imageUrl }} style={styles.avatar} />
-            </TouchableOpacity>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              {!edit && (
-                <View style={styles.editRow}>
-                  <Text style={{ fontFamily: 'mon-b', fontSize: 22 }}>
-                    {firstName} {lastName}
-                  </Text>
-                  <TouchableOpacity onPress={() => setEdit(true)}>
-                    <Ionicons name="create-outline" size={24} color={Colors.dark} />
-                  </TouchableOpacity>
-                </View>
-              )}
-              {edit && (
-                <View style={styles.editRow}>
-                  <TextInput
-                    placeholder="First Name"
-                    value={firstName || ''}
-                    onChangeText={setFirstName}
-                    style={[defaultStyles.inputField, { width: 100 }]}
-                  />
-                  <TextInput
-                    placeholder="Last Name"
-                    value={lastName || ''}
-                    onChangeText={setLastName}
-                    style={[defaultStyles.inputField, { width: 100 }]}
-                  />
-                  <TouchableOpacity onPress={onSaveUser}>
-                    <Ionicons name="checkmark-outline" size={24} color={Colors.dark} />
-                  </TouchableOpacity>
-                </View>
-              )}
+      <View style={styles.heroCard}>
+        <TouchableOpacity activeOpacity={0.86} onPress={onUploadAvatar} style={styles.avatarWrap}>
+          {avatarUrl || currentAvatarUrl ? (
+            <Image source={{ uri: avatarUrl || currentAvatarUrl }} style={styles.avatar} />
+          ) : (
+            <View style={[styles.avatar, styles.avatarFallback]}>
+              <Ionicons name="person" size={42} color="#fff" />
             </View>
-            <Text>{email}</Text>
-            <Text>Since {user?.createdAt!.toLocaleDateString()}</Text>
-          </View>
-        )}
-
-        {isSignedIn && (
-          <View style={styles.adminDebug}>
-            <Text style={styles.adminDebugTitle}>Admin debug</Text>
-            <Text style={styles.adminDebugText}>isAdmin: {isAdmin ? 'true' : 'false'}</Text>
-            <Text style={styles.adminDebugText}>login email: {authEmail ?? 'none'}</Text>
-            <Text style={styles.adminDebugText}>admin email: {ADMIN_EMAIL}</Text>
-          </View>
-        )}
-
-        {isSignedIn && (
-          <View style={styles.actions}>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => router.push('/(modals)/add-house')}>
-              <Ionicons name="home-outline" size={20} color="#fff" />
-              <Text style={styles.actionButtonText}>Add House</Text>
-            </TouchableOpacity>
-
-            {isAdmin && (
-              <TouchableOpacity
-                style={[styles.actionButton, styles.adminButton]}
-                onPress={() => router.push('/admin/pending-houses')}>
-                <Ionicons name="shield-checkmark-outline" size={20} color="#fff" />
-                <Text style={styles.actionButtonText}>Pending Houses</Text>
-              </TouchableOpacity>
+          )}
+          <View style={styles.cameraBadge}>
+            {isUploadingAvatar ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons name="camera" size={18} color="#fff" />
             )}
           </View>
-        )}
+        </TouchableOpacity>
 
-        {isSignedIn && <Button title="Log Out" onPress={() => signOut()} color={Colors.dark} />}
-        {!isSignedIn && (
-          <Link href={'/(modals)/login'} asChild>
-            <Button title="Log In" color={Colors.dark} />
-          </Link>
+        <View style={styles.heroText}>
+          <Text style={styles.nameText}>{user.fullName ?? (username || 'Your profile')}</Text>
+          <Text style={styles.emailText}>{currentEmail}</Text>
+          <Text style={styles.memberText}>
+            Since {user.createdAt ? user.createdAt.toLocaleDateString('en-US') : 'today'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View>
+            <Text style={styles.cardTitle}>Account details</Text>
+            <Text style={styles.cardSubtitle}>Username and profile info shown inside the app.</Text>
+          </View>
+          <Ionicons name="person-outline" size={22} color={Colors.primary} />
+        </View>
+
+        <View style={styles.form}>
+          <Field label="Username">
+            <TextInput
+              autoCapitalize="none"
+              onChangeText={setUsername}
+              placeholder="Choose username"
+              placeholderTextColor="#888"
+              style={styles.input}
+              value={username}
+            />
+          </Field>
+          <View style={styles.row}>
+            <Field label="First name" style={styles.halfField}>
+              <TextInput
+                onChangeText={setFirstName}
+                placeholder="First name"
+                placeholderTextColor="#888"
+                style={styles.input}
+                value={firstName}
+              />
+            </Field>
+            <Field label="Last name" style={styles.halfField}>
+              <TextInput
+                onChangeText={setLastName}
+                placeholder="Last name"
+                placeholderTextColor="#888"
+                style={styles.input}
+                value={lastName}
+              />
+            </Field>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          disabled={isSavingProfile}
+          style={[defaultStyles.btn, isSavingProfile && styles.disabledButton]}
+          onPress={onSaveProfile}>
+          <Text style={defaultStyles.btnText}>{isSavingProfile ? 'Saving...' : 'Save Profile'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.actionsGrid}>
+        <ActionButton
+          icon="home-outline"
+          label="Add House"
+          onPress={() => router.push('/(modals)/add-house')}
+        />
+        <ActionButton
+          icon="briefcase-outline"
+          label="Manage Houses"
+          color="#2f4858"
+          onPress={() => router.push('/host/manage-houses')}
+        />
+        {isAdmin ? (
+          <ActionButton
+            icon="shield-checkmark-outline"
+            label="Pending Houses"
+            color={Colors.dark}
+            onPress={() => router.push('/admin/pending-houses')}
+          />
+        ) : null}
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View>
+            <Text style={styles.cardTitle}>Password</Text>
+            <Text style={styles.cardSubtitle}>Change your password after confirming the old one.</Text>
+          </View>
+          <Ionicons name="lock-closed-outline" size={22} color={Colors.primary} />
+        </View>
+
+        {!user.passwordEnabled ? (
+          <View style={styles.noticeCard}>
+            <Ionicons name="information-circle-outline" size={23} color={Colors.primary} />
+            <Text style={styles.noticeText}>
+              You signed in with {providerNames}. Password change is not available for this account.
+            </Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.form}>
+              <Field label="Current password">
+                <TextInput
+                  autoCapitalize="none"
+                  onChangeText={setCurrentPassword}
+                  placeholder="Current password"
+                  placeholderTextColor="#888"
+                  secureTextEntry
+                  style={styles.input}
+                  value={currentPassword}
+                />
+              </Field>
+              <Field label="New password">
+                <TextInput
+                  autoCapitalize="none"
+                  onChangeText={setNewPassword}
+                  placeholder="New password"
+                  placeholderTextColor="#888"
+                  secureTextEntry
+                  style={styles.input}
+                  value={newPassword}
+                />
+              </Field>
+
+              <View style={styles.rulesCard}>
+                {passwordRules.map((rule) => (
+                  <View key={rule.label} style={styles.ruleRow}>
+                    <Ionicons
+                      color={rule.isValid ? '#1E9E5A' : '#999'}
+                      name={rule.isValid ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={17}
+                    />
+                    <Text style={[styles.ruleText, rule.isValid && styles.ruleTextValid]}>
+                      {rule.label}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              <Field label="Confirm password">
+                <TextInput
+                  autoCapitalize="none"
+                  onChangeText={setConfirmPassword}
+                  placeholder="Repeat new password"
+                  placeholderTextColor="#888"
+                  secureTextEntry
+                  style={styles.input}
+                  value={confirmPassword}
+                />
+              </Field>
+            </View>
+
+            <TouchableOpacity
+              disabled={isChangingPassword}
+              style={[styles.passwordButton, isChangingPassword && styles.disabledButton]}
+              onPress={onChangePassword}>
+              <Text style={styles.passwordButtonText}>
+                {isChangingPassword ? 'Changing...' : 'Change Password'}
+              </Text>
+            </TouchableOpacity>
+          </>
         )}
-      </ScrollView>
-    </SafeAreaView>
+      </View>
+
+      <TouchableOpacity style={styles.logoutButton} onPress={() => signOut()}>
+        <Ionicons name="log-out-outline" size={20} color="#b42318" />
+        <Text style={styles.logoutText}>Log Out</Text>
+      </TouchableOpacity>
+    </ScrollView>
   );
 };
 
+const Field = ({
+  label,
+  children,
+  style,
+}: {
+  label: string;
+  children: React.ReactNode;
+  style?: object;
+}) => (
+  <View style={[styles.field, style]}>
+    <Text style={styles.label}>{label}</Text>
+    {children}
+  </View>
+);
+
+const ActionButton = ({
+  icon,
+  label,
+  onPress,
+  color = Colors.primary,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  onPress: () => void;
+  color?: string;
+}) => (
+  <TouchableOpacity style={[styles.actionButton, { backgroundColor: color }]} onPress={onPress}>
+    <Ionicons name={icon} size={20} color="#fff" />
+    <Text style={styles.actionButtonText}>{label}</Text>
+  </TouchableOpacity>
+);
+
 const styles = StyleSheet.create({
-  content: {
-    paddingBottom: 40,
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
   },
-  headerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: 24,
+  content: {
+    gap: 18,
+    padding: 20,
+    paddingBottom: 44,
   },
   header: {
+    gap: 6,
+  },
+  pageTitle: {
+    color: Colors.dark,
     fontFamily: 'mon-b',
-    fontSize: 24,
+    fontSize: 30,
+  },
+  pageSubtitle: {
+    color: Colors.grey,
+    fontFamily: 'mon',
+    lineHeight: 21,
+  },
+  heroCard: {
+    alignItems: 'center',
+    backgroundColor: '#fff5f7',
+    borderRadius: 24,
+    gap: 14,
+    padding: 20,
+  },
+  avatarWrap: {
+    position: 'relative',
+  },
+  avatar: {
+    backgroundColor: Colors.grey,
+    borderColor: '#fff',
+    borderRadius: 58,
+    borderWidth: 4,
+    height: 116,
+    width: 116,
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    backgroundColor: Colors.dark,
+    justifyContent: 'center',
+  },
+  cameraBadge: {
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    borderColor: '#fff',
+    borderRadius: 18,
+    borderWidth: 3,
+    bottom: 4,
+    height: 36,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: 4,
+    width: 36,
+  },
+  heroText: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  nameText: {
+    color: Colors.dark,
+    fontFamily: 'mon-b',
+    fontSize: 22,
+  },
+  emailText: {
+    color: Colors.grey,
+    fontFamily: 'mon-sb',
+  },
+  memberText: {
+    color: Colors.grey,
+    fontFamily: 'mon',
+    fontSize: 12,
   },
   card: {
     backgroundColor: '#fff',
-    padding: 24,
-    borderRadius: 16,
-    marginHorizontal: 24,
-    marginTop: 24,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: {
-      width: 1,
-      height: 2,
-    },
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: 24,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: Colors.grey,
-  },
-  editRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  actions: {
-    gap: 12,
-    marginHorizontal: 24,
-    marginBottom: 24,
-  },
-  adminDebug: {
-    marginHorizontal: 24,
-    marginBottom: 14,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: '#fff7e6',
+    borderColor: '#e5e5e5',
+    borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#f0c36d',
-    gap: 4,
+    gap: 16,
+    padding: 16,
   },
-  adminDebugTitle: {
+  cardHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'space-between',
+  },
+  cardTitle: {
+    color: Colors.dark,
     fontFamily: 'mon-b',
-    color: Colors.dark,
-    fontSize: 15,
+    fontSize: 19,
   },
-  adminDebugText: {
+  cardSubtitle: {
+    color: Colors.grey,
     fontFamily: 'mon',
-    color: Colors.dark,
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 3,
   },
-  actionButton: {
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  form: {
+    gap: 12,
+  },
+  field: {
+    gap: 7,
+  },
+  label: {
+    color: Colors.dark,
+    fontFamily: 'mon-sb',
+    fontSize: 13,
+  },
+  input: {
+    ...defaultStyles.inputField,
+    color: Colors.dark,
+    fontFamily: 'mon',
+    height: 50,
+    paddingHorizontal: 14,
+  },
+  row: {
     flexDirection: 'row',
     gap: 10,
   },
-  adminButton: {
-    backgroundColor: Colors.dark,
+  halfField: {
+    flex: 1,
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+  actionsGrid: {
+    gap: 12,
+  },
+  actionButton: {
+    alignItems: 'center',
+    borderRadius: 16,
+    flexDirection: 'row',
+    gap: 10,
+    height: 54,
+    justifyContent: 'center',
   },
   actionButtonText: {
     color: '#fff',
     fontFamily: 'mon-b',
     fontSize: 16,
   },
+  noticeCard: {
+    alignItems: 'flex-start',
+    backgroundColor: '#fff5f7',
+    borderRadius: 16,
+    flexDirection: 'row',
+    gap: 10,
+    padding: 14,
+  },
+  noticeText: {
+    color: Colors.dark,
+    flex: 1,
+    fontFamily: 'mon',
+    lineHeight: 20,
+  },
+  rulesCard: {
+    backgroundColor: '#FAFAFA',
+    borderColor: '#ECECEC',
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 8,
+    padding: 12,
+  },
+  ruleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  ruleText: {
+    color: '#777',
+    fontFamily: 'mon',
+    fontSize: 12,
+  },
+  ruleTextValid: {
+    color: '#1E9E5A',
+    fontFamily: 'mon-sb',
+  },
+  passwordButton: {
+    alignItems: 'center',
+    backgroundColor: Colors.dark,
+    borderRadius: 14,
+    height: 50,
+    justifyContent: 'center',
+  },
+  passwordButtonText: {
+    color: '#fff',
+    fontFamily: 'mon-b',
+    fontSize: 16,
+  },
+  logoutButton: {
+    alignItems: 'center',
+    backgroundColor: '#fff1f1',
+    borderRadius: 16,
+    flexDirection: 'row',
+    gap: 8,
+    height: 52,
+    justifyContent: 'center',
+  },
+  logoutText: {
+    color: '#b42318',
+    fontFamily: 'mon-b',
+    fontSize: 16,
+  },
+  centered: {
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    flex: 1,
+    gap: 10,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  emptyTitle: {
+    color: Colors.dark,
+    fontFamily: 'mon-b',
+    fontSize: 20,
+    textAlign: 'center',
+  },
+  emptyText: {
+    color: Colors.grey,
+    fontFamily: 'mon',
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  fullButton: {
+    alignSelf: 'stretch',
+    marginTop: 8,
+  },
 });
 
-export default Page;
+export default ProfilePage;
