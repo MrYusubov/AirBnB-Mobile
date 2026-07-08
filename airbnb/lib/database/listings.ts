@@ -34,6 +34,7 @@ export type Booking = {
   check_out: string;
   adults: number;
   children: number;
+  infants: number;
   total_price: number;
   status: BookingStatus;
   paid_at: string | null;
@@ -69,6 +70,7 @@ export type CreateBookingInput = {
   check_out: string;
   adults: number;
   children: number;
+  infants: number;
   total_price: number;
   status?: BookingStatus;
 };
@@ -114,6 +116,25 @@ export type Message = {
   read_at: string | null;
 };
 
+export type NotificationType =
+  | 'listing_accepted'
+  | 'listing_rejected'
+  | 'reservation_requested'
+  | 'reservation_accepted'
+  | 'reservation_cancelled';
+
+export type AppNotification = {
+  id: string;
+  user_id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  listing_id: string | null;
+  booking_id: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
 type ListingRow = {
   data: string;
   status: ListingStatus;
@@ -129,6 +150,7 @@ type BookingRow = Booking;
 type ReviewRow = Review;
 type ConversationRow = Conversation;
 type MessageRow = Message;
+type NotificationRow = AppNotification;
 type UserTripRow = Booking & {
   listing_data: string;
   listing_status: ListingStatus;
@@ -458,6 +480,7 @@ export const initializeListingsDatabase = async () => {
         check_out TEXT NOT NULL,
         adults INTEGER NOT NULL DEFAULT 1,
         children INTEGER NOT NULL DEFAULT 0,
+        infants INTEGER NOT NULL DEFAULT 0,
         total_price REAL NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'pending',
         paid_at TEXT,
@@ -514,6 +537,21 @@ export const initializeListingsDatabase = async () => {
 
       CREATE INDEX IF NOT EXISTS messages_conversation_idx ON messages(conversation_id, created_at);
 
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY NOT NULL,
+        user_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        listing_id TEXT,
+        booking_id TEXT,
+        read_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS notifications_read_idx ON notifications(user_id, read_at);
+
       CREATE TABLE IF NOT EXISTS destinations (
         id TEXT PRIMARY KEY NOT NULL,
         title TEXT NOT NULL,
@@ -530,6 +568,7 @@ export const initializeListingsDatabase = async () => {
     await ensureColumn(db, 'listings', 'owner_email', 'owner_email TEXT');
     await ensureColumn(db, 'listings', 'image_urls', 'image_urls TEXT');
     await ensureColumn(db, 'listings', 'cloudinary_public_ids', 'cloudinary_public_ids TEXT');
+    await ensureColumn(db, 'bookings', 'infants', 'infants INTEGER NOT NULL DEFAULT 0');
 
     await db.execAsync(`
       CREATE INDEX IF NOT EXISTS listings_status_idx ON listings(status);
@@ -591,6 +630,140 @@ export const upsertUser = async (user: AppUser) => {
       image_url = excluded.image_url,
       updated_at = CURRENT_TIMESTAMP`,
     [user.id, user.email, user.first_name, user.last_name, user.image_url]
+  );
+};
+
+export const getUserById = async (id: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getFirstAsync<AppUser>(
+    'SELECT id, email, first_name, last_name, image_url FROM users WHERE id = ? LIMIT 1',
+    [id]
+  );
+};
+
+export const createNotification = async (input: {
+  userId?: string | null;
+  type: NotificationType;
+  title: string;
+  message: string;
+  listingId?: string | null;
+  bookingId?: string | null;
+}) => {
+  if (!input.userId) {
+    return null;
+  }
+
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const notification: AppNotification = {
+    id: createId(),
+    user_id: input.userId,
+    type: input.type,
+    title: input.title,
+    message: input.message,
+    listing_id: input.listingId ?? null,
+    booking_id: input.bookingId ?? null,
+    read_at: null,
+    created_at: new Date().toISOString(),
+  };
+
+  await db.runAsync(
+    `INSERT INTO notifications (
+      id,
+      user_id,
+      type,
+      title,
+      message,
+      listing_id,
+      booking_id,
+      read_at,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      notification.id,
+      notification.user_id,
+      notification.type,
+      notification.title,
+      notification.message,
+      notification.listing_id,
+      notification.booking_id,
+      notification.read_at,
+      notification.created_at,
+    ]
+  );
+
+  return notification;
+};
+
+const notifyUser = async (input: {
+  userId?: string | null;
+  type: NotificationType;
+  title: string;
+  message: string;
+  listingId?: string | null;
+  bookingId?: string | null;
+}) => {
+  await createNotification(input);
+};
+
+export const getNotificationsForUser = async (userId: string, limit = 50) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  return db.getAllAsync<NotificationRow>(
+    `SELECT id,
+      user_id,
+      type,
+      title,
+      message,
+      listing_id,
+      booking_id,
+      read_at,
+      created_at
+    FROM notifications
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?`,
+    [userId, limit]
+  );
+};
+
+export const getUnreadNotificationCount = async (userId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ total: number }>(
+    'SELECT COUNT(*) as total FROM notifications WHERE user_id = ? AND read_at IS NULL',
+    [userId]
+  );
+
+  return row?.total ?? 0;
+};
+
+export const markNotificationRead = async (notificationId: string, userId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE notifications
+    SET read_at = COALESCE(read_at, ?)
+    WHERE id = ? AND user_id = ?`,
+    [new Date().toISOString(), notificationId, userId]
+  );
+};
+
+export const markAllNotificationsRead = async (userId: string) => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  await db.runAsync(
+    `UPDATE notifications
+    SET read_at = COALESCE(read_at, ?)
+    WHERE user_id = ?`,
+    [new Date().toISOString(), userId]
   );
 };
 
@@ -704,7 +877,22 @@ export const updateListingStatus = async (id: string, status: ListingStatus) => 
     return null;
   }
 
-  return writeListing(db, { ...listing, status });
+  const updatedListing = await writeListing(db, { ...listing, status });
+
+  if (status === 'accepted' || status === 'rejected') {
+    const isAccepted = status === 'accepted';
+    await notifyUser({
+      userId: listing.owner_user_id,
+      type: isAccepted ? 'listing_accepted' : 'listing_rejected',
+      title: isAccepted ? 'Your house was accepted' : 'Your house was rejected',
+      message: isAccepted
+        ? `"${listing.name}" was approved by admin and is now visible on the home page.`
+        : `"${listing.name}" was rejected by admin and will not appear on the home page.`,
+      listingId: listing.id,
+    });
+  }
+
+  return updatedListing;
 };
 
 export const deleteListing = async (id: string) => {
@@ -714,6 +902,7 @@ export const deleteListing = async (id: string) => {
   await db.runAsync('DELETE FROM wishlists WHERE listing_id = ?', [id]);
   await db.runAsync('DELETE FROM reviews WHERE listing_id = ?', [id]);
   await db.runAsync('DELETE FROM bookings WHERE listing_id = ?', [id]);
+  await db.runAsync('DELETE FROM notifications WHERE listing_id = ?', [id]);
   const conversationRows = await db.getAllAsync<{ id: string }>(
     'SELECT id FROM conversations WHERE listing_id = ?',
     [id]
@@ -869,6 +1058,7 @@ export const createBooking = async (input: CreateBookingInput) => {
     check_out: input.check_out,
     adults: input.adults,
     children: input.children,
+    infants: input.infants,
     total_price: input.total_price,
     status: input.status ?? 'pending',
     paid_at: ['paid', 'accepted'].includes(input.status ?? 'pending') ? new Date().toISOString() : null,
@@ -884,12 +1074,13 @@ export const createBooking = async (input: CreateBookingInput) => {
       check_out,
       adults,
       children,
+      infants,
       total_price,
       status,
       paid_at,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
     [
       booking.id,
       booking.user_id,
@@ -898,12 +1089,28 @@ export const createBooking = async (input: CreateBookingInput) => {
       booking.check_out,
       booking.adults,
       booking.children,
+      booking.infants,
       booking.total_price,
       booking.status,
       booking.paid_at,
       booking.created_at,
     ]
   );
+
+  const listing = await getListingById(input.listing_id);
+  const guest = await getUserById(input.user_id);
+  const guestName = [guest?.first_name, guest?.last_name].filter(Boolean).join(' ') || guest?.email || 'A guest';
+
+  if (listing?.owner_user_id) {
+    await notifyUser({
+      userId: listing.owner_user_id,
+      type: 'reservation_requested',
+      title: 'New reservation request',
+      message: `${guestName} requested "${listing.name}" from ${booking.check_in} to ${booking.check_out}.`,
+      listingId: listing.id,
+      bookingId: booking.id,
+    });
+  }
 
   return booking;
 };
@@ -934,6 +1141,7 @@ export const getHostReservations = async (hostUserId: string) => {
       bookings.check_out,
       bookings.adults,
       bookings.children,
+      bookings.infants,
       bookings.total_price,
       bookings.status,
       bookings.paid_at,
@@ -966,6 +1174,29 @@ export const updateBookingStatus = async (
 
   const db = await getDatabase();
   const paidAt = status === 'accepted' ? new Date().toISOString() : null;
+  const bookingDetails = await db.getFirstAsync<{
+    id: string;
+    user_id: string;
+    listing_id: string;
+    check_in: string;
+    check_out: string;
+    listing_name: string | null;
+    guest_email: string | null;
+  }>(
+    `SELECT bookings.id,
+      bookings.user_id,
+      bookings.listing_id,
+      bookings.check_in,
+      bookings.check_out,
+      listings.name as listing_name,
+      users.email as guest_email
+    FROM bookings
+    INNER JOIN listings ON listings.id = bookings.listing_id
+    LEFT JOIN users ON users.id = bookings.user_id
+    WHERE bookings.id = ?
+    LIMIT 1`,
+    [bookingId]
+  );
 
   await db.runAsync(
     `UPDATE bookings
@@ -978,6 +1209,22 @@ export const updateBookingStatus = async (
     WHERE id = ?`,
     [status, status, paidAt, bookingId]
   );
+
+  if (bookingDetails) {
+    const isAccepted = status === 'accepted';
+    const listingName = bookingDetails.listing_name ?? 'your reservation';
+
+    await notifyUser({
+      userId: bookingDetails.user_id,
+      type: isAccepted ? 'reservation_accepted' : 'reservation_cancelled',
+      title: isAccepted ? 'Reservation accepted' : 'Reservation declined',
+      message: isAccepted
+        ? `Your reservation for "${listingName}" from ${bookingDetails.check_in} to ${bookingDetails.check_out} was accepted.`
+        : `Your reservation for "${listingName}" from ${bookingDetails.check_in} to ${bookingDetails.check_out} was declined or cancelled.`,
+      listingId: bookingDetails.listing_id,
+      bookingId: bookingDetails.id,
+    });
+  }
 };
 
 export const getCompletedTripsForUser = async (userId: string) => {
@@ -993,6 +1240,7 @@ export const getCompletedTripsForUser = async (userId: string) => {
       bookings.check_out,
       bookings.adults,
       bookings.children,
+      bookings.infants,
       bookings.total_price,
       bookings.status,
       bookings.paid_at,
@@ -1040,6 +1288,7 @@ export const getCompletedTripsForUser = async (userId: string) => {
       check_out: row.check_out,
       adults: row.adults,
       children: row.children,
+      infants: row.infants,
       total_price: row.total_price,
       status: row.status,
       paid_at: row.paid_at,

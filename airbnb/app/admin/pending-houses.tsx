@@ -89,7 +89,7 @@ export default function PendingHousesPage() {
                 <Text numberOfLines={1} style={styles.title}>
                   {item.name}
                 </Text>
-                <Text style={styles.price}>EUR {item.price ?? 0}</Text>
+                <Text style={styles.price}>{`$${item.price ?? 0}`}</Text>
               </View>
 
               <Text style={styles.meta}>

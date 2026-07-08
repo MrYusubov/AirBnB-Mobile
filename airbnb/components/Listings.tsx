@@ -7,17 +7,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BottomSheetFlatList, BottomSheetFlatListMethods } from '@gorhom/bottom-sheet';
 import { useUser } from '@clerk/clerk-expo';
 import Colors from '@/constants/Colors';
-import { getWishlistListingIds, Listing, toggleWishlist } from '@/lib/database/listings';
+import { deleteListing, getWishlistListingIds, Listing, toggleWishlist } from '@/lib/database/listings';
+import { useIsAdmin } from '@/lib/admin';
 
 interface Props {
   listings: Listing[];
   refresh: number;
   category: string;
+  onListingDeleted?: (listingId: string) => void;
 }
 
-const Listings = ({ listings: items, refresh, category }: Props) => {
+const Listings = ({ listings: items, refresh, category, onListingDeleted }: Props) => {
   const listRef = useRef<BottomSheetFlatListMethods>(null);
   const { user } = useUser();
+  const { isAdmin } = useIsAdmin();
   const [loading, setLoading] = useState<boolean>(false);
   const [wishlistedIds, setWishlistedIds] = useState<string[]>([]);
 
@@ -83,6 +86,29 @@ const Listings = ({ listings: items, refresh, category }: Props) => {
     );
   };
 
+  const onDeleteListing = (event: GestureResponderEvent, listing: Listing) => {
+    event.stopPropagation();
+
+    Alert.alert('Delete house', `Delete "${listing.name}" from the app?`, [
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteListing(listing.id);
+            onListingDeleted?.(listing.id);
+          } catch (error) {
+            Alert.alert('Could not delete house', error instanceof Error ? error.message : 'Try again');
+          }
+        },
+      },
+    ]);
+  };
+
   // Render one listing row for the FlatList
   const renderRow: ListRenderItem<Listing> = ({ item }) => {
     const isWishlisted = wishlistedIds.includes(item.id);
@@ -101,6 +127,13 @@ const Listings = ({ listings: items, refresh, category }: Props) => {
               color={isWishlisted ? Colors.primary : '#000'}
             />
           </TouchableOpacity>
+          {isAdmin ? (
+            <TouchableOpacity
+              style={styles.adminDeleteButton}
+              onPress={(event) => onDeleteListing(event, item)}>
+              <Ionicons name="trash-outline" size={22} color="#b42318" />
+            </TouchableOpacity>
+          ) : null}
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text style={{ fontSize: 16, fontFamily: 'mon-sb' }}>{item.name}</Text>
             <View style={{ flexDirection: 'row', gap: 4 }}>
@@ -110,7 +143,7 @@ const Listings = ({ listings: items, refresh, category }: Props) => {
           </View>
           <Text style={{ fontFamily: 'mon' }}>{item.room_type}</Text>
           <View style={{ flexDirection: 'row', gap: 4 }}>
-            <Text style={{ fontFamily: 'mon-sb' }}>€ {item.price}</Text>
+            <Text style={{ fontFamily: 'mon-sb' }}>{`$${item.price}`}</Text>
             <Text style={{ fontFamily: 'mon' }}>night</Text>
           </View>
         </Animated.View>
@@ -150,6 +183,17 @@ const styles = StyleSheet.create({
     height: 42,
     borderRadius: 21,
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  adminDeleteButton: {
+    position: 'absolute',
+    left: 30,
+    top: 30,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
     alignItems: 'center',
     justifyContent: 'center',
   },

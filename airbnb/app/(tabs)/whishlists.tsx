@@ -90,7 +90,7 @@ const WishlistPage = () => {
           {item.room_type} in {item.smart_location}
         </Text>
         <View style={styles.priceRow}>
-          <Text style={styles.price}>€ {item.price}</Text>
+          <Text style={styles.price}>{`$${item.price}`}</Text>
           <Text style={styles.night}>night</Text>
         </View>
       </View>

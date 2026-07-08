@@ -21,7 +21,36 @@ enum Strategy {
   Facebook = 'oauth_facebook',
 }
 
-type AuthMode = 'login' | 'signup' | 'verify';
+type AuthMode = 'login' | 'signup' | 'verify' | 'forgot' | 'forgotCode' | 'forgotNewPassword';
+
+type ResetPasswordEmailCode = {
+  sendCode?: () => Promise<{ error?: unknown } | void>;
+  verifyCode?: (params: { code: string }) => Promise<{ error?: unknown } | void>;
+  submitPassword?: (params: {
+    password: string;
+    signOutOfOtherSessions?: boolean;
+  }) => Promise<{ error?: unknown } | void>;
+};
+
+type ResetSignInResource = {
+  status?: string;
+  createdSessionId?: string | null;
+  resetPasswordEmailCode?: ResetPasswordEmailCode;
+  create: (params: Record<string, unknown>) => Promise<ResetSignInResource>;
+  attemptFirstFactor?: (params: Record<string, unknown>) => Promise<ResetSignInResource>;
+};
+
+type PasswordRule = {
+  label: string;
+  isValid: boolean;
+};
+
+const getPasswordRules = (value: string): PasswordRule[] => [
+  { label: 'Minimum 6 characters', isValid: value.length >= 6 },
+  { label: 'At least 1 uppercase letter', isValid: /[A-Z]/.test(value) },
+  { label: 'At least 1 number', isValid: /\d/.test(value) },
+  { label: 'At least 1 symbol', isValid: /[^A-Za-z0-9]/.test(value) },
+];
 
 const getErrorMessage = (error: unknown) => {
   const clerkError = error as { errors?: { message?: string }[]; message?: string };
@@ -39,26 +68,43 @@ const Login = () => {
   const { isLoaded: isSignUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
 
   const [mode, setMode] = useState<AuthMode>('login');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [code, setCode] = useState('');
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [resetSignInAttempt, setResetSignInAttempt] = useState<ResetSignInResource | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const passwordRules = useMemo(
-    () => [
-      { label: 'Minimum 6 characters', isValid: password.length >= 6 },
-      { label: 'At least 1 uppercase letter', isValid: /[A-Z]/.test(password) },
-      { label: 'At least 1 number', isValid: /\d/.test(password) },
-      { label: 'At least 1 symbol', isValid: /[^A-Za-z0-9]/.test(password) },
-    ],
+    () => getPasswordRules(password),
     [password],
   );
   const isPasswordValid = passwordRules.every((rule) => rule.isValid);
 
+  const resetPasswordRules = useMemo(
+    () => getPasswordRules(resetPassword),
+    [resetPassword],
+  );
+  const isResetPasswordValid = resetPasswordRules.every((rule) => rule.isValid);
+
   const resetSignUpFields = () => {
+    setFirstName('');
+    setLastName('');
     setConfirmPassword('');
     setCode('');
+  };
+
+  const resetForgotPasswordFields = () => {
+    setResetCode('');
+    setResetPassword('');
+    setResetConfirmPassword('');
+    setResetSignInAttempt(null);
   };
 
   const onSelectAuth = async (strategy: Strategy) => {
@@ -118,10 +164,12 @@ const Login = () => {
   };
 
   const onStartSignUp = async () => {
+    const trimmedFirstName = firstName.trim();
+    const trimmedLastName = lastName.trim();
     const trimmedEmail = email.trim();
 
-    if (!trimmedEmail || !password || !confirmPassword) {
-      Alert.alert('Missing info', 'Please fill email, password, and confirm password.');
+    if (!trimmedFirstName || !trimmedLastName || !trimmedEmail || !password || !confirmPassword) {
+      Alert.alert('Missing info', 'Please fill first name, last name, email, password, and confirm password.');
       return;
     }
 
@@ -143,6 +191,8 @@ const Login = () => {
       setIsLoading(true);
       await signUp.create({
         emailAddress: trimmedEmail,
+        firstName: trimmedFirstName,
+        lastName: trimmedLastName,
         password,
       });
       await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
@@ -200,18 +250,207 @@ const Login = () => {
     }
   };
 
+  const getResetSignIn = () => resetSignInAttempt ?? (signIn as unknown as ResetSignInResource);
+
+  const onSendResetCode = async () => {
+    const trimmedEmail = resetEmail.trim() || email.trim();
+
+    if (!trimmedEmail) {
+      Alert.alert('Missing email', 'Please enter your email address.');
+      return;
+    }
+
+    if (!isSignInLoaded) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const resetSignIn = signIn as unknown as ResetSignInResource;
+      const createdSignIn = await resetSignIn.create({ identifier: trimmedEmail });
+      let nextSignInAttempt = createdSignIn;
+
+      if (createdSignIn.resetPasswordEmailCode?.sendCode) {
+        const result = await createdSignIn.resetPasswordEmailCode.sendCode();
+
+        if (result && 'error' in result && result.error) {
+          throw result.error;
+        }
+      } else {
+        nextSignInAttempt = await createdSignIn.create({
+          identifier: trimmedEmail,
+          strategy: 'reset_password_email_code',
+        });
+      }
+
+      setResetEmail(trimmedEmail);
+      setResetSignInAttempt(nextSignInAttempt);
+      setMode('forgotCode');
+      Alert.alert('Code sent', 'We sent a password reset code to your email.');
+    } catch (error) {
+      Alert.alert('Could not send code', getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const onVerifyResetCode = async () => {
+    const trimmedCode = resetCode.trim();
+
+    if (!trimmedCode) {
+      Alert.alert('Missing code', 'Please enter the OTP code from your email.');
+      return;
+    }
+
+    if (!isSignInLoaded) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const resetSignIn = getResetSignIn();
+
+      if (resetSignIn.resetPasswordEmailCode?.verifyCode) {
+        const result = await resetSignIn.resetPasswordEmailCode.verifyCode({ code: trimmedCode });
+
+        if (result && 'error' in result && result.error) {
+          throw result.error;
+        }
+      }
+
+      setMode('forgotNewPassword');
+    } catch (error) {
+      Alert.alert('Invalid code', getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const onSubmitResetPassword = async () => {
+    const trimmedCode = resetCode.trim();
+
+    if (!trimmedCode) {
+      Alert.alert('Missing code', 'Please enter the OTP code from your email.');
+      setMode('forgotCode');
+      return;
+    }
+
+    if (!resetPassword || !resetConfirmPassword) {
+      Alert.alert('Missing password', 'Please enter and confirm your new password.');
+      return;
+    }
+
+    if (resetPassword !== resetConfirmPassword) {
+      Alert.alert('Passwords do not match', 'Please confirm the same password.');
+      return;
+    }
+
+    if (!isResetPasswordValid) {
+      Alert.alert('Weak password', 'Please complete all password requirements.');
+      return;
+    }
+
+    if (!isSignInLoaded) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const resetSignIn = getResetSignIn();
+      let completedSignIn: ResetSignInResource | undefined;
+
+      if (resetSignIn.resetPasswordEmailCode?.submitPassword) {
+        const result = await resetSignIn.resetPasswordEmailCode.submitPassword({
+          password: resetPassword,
+          signOutOfOtherSessions: true,
+        });
+
+        if (result && 'error' in result && result.error) {
+          throw result.error;
+        }
+
+        completedSignIn = resetSignIn;
+      } else if (resetSignIn.attemptFirstFactor) {
+        completedSignIn = await resetSignIn.attemptFirstFactor({
+          strategy: 'reset_password_email_code',
+          code: trimmedCode,
+          password: resetPassword,
+        });
+      }
+
+      const sessionId = completedSignIn?.createdSessionId ?? resetSignIn.createdSessionId;
+
+      if ((completedSignIn?.status === 'complete' || resetSignIn.status === 'complete') && sessionId) {
+        await setSignInActive({ session: sessionId });
+        router.back();
+        return;
+      }
+
+      Alert.alert('Password updated', 'Your password was updated. Please log in with the new password.');
+      setPassword('');
+      setConfirmPassword('');
+      setEmail(resetEmail.trim());
+      resetForgotPasswordFields();
+      setMode('login');
+    } catch (error) {
+      Alert.alert('Could not reset password', getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const switchToLogin = () => {
     setMode('login');
     resetSignUpFields();
+    resetForgotPasswordFields();
   };
 
   const switchToSignUp = () => {
     setMode('signup');
     resetSignUpFields();
+    resetForgotPasswordFields();
+  };
+
+  const switchToForgotPassword = () => {
+    setResetEmail(email.trim());
+    resetForgotPasswordFields();
+    setMode('forgot');
   };
 
   const renderEmailPasswordFields = () => (
     <View style={styles.form}>
+      {mode === 'signup' ? (
+        <View style={styles.nameRow}>
+          <View style={[styles.fieldGroup, styles.nameField]}>
+            <Text style={styles.label}>First name</Text>
+            <TextInput
+              autoCapitalize="words"
+              autoComplete="given-name"
+              onChangeText={setFirstName}
+              placeholder="First name"
+              placeholderTextColor="#777"
+              style={[defaultStyles.inputField, styles.input]}
+              textContentType="givenName"
+              value={firstName}
+            />
+          </View>
+
+          <View style={[styles.fieldGroup, styles.nameField]}>
+            <Text style={styles.label}>Last name</Text>
+            <TextInput
+              autoCapitalize="words"
+              autoComplete="family-name"
+              onChangeText={setLastName}
+              placeholder="Last name"
+              placeholderTextColor="#777"
+              style={[defaultStyles.inputField, styles.input]}
+              textContentType="familyName"
+              value={lastName}
+            />
+          </View>
+        </View>
+      ) : null}
+
       <View style={styles.fieldGroup}>
         <Text style={styles.label}>Email</Text>
         <TextInput
@@ -294,6 +533,10 @@ const Login = () => {
           <Text style={styles.switchLink}>Sign up</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity disabled={isLoading} onPress={switchToForgotPassword} style={styles.forgotButton}>
+        <Text style={styles.switchLink}>Forgot password?</Text>
+      </TouchableOpacity>
     </>
   );
 
@@ -358,29 +601,219 @@ const Login = () => {
     </>
   );
 
+  const renderPasswordRules = (rules: PasswordRule[]) => (
+    <View style={styles.rulesCard}>
+      {rules.map((rule) => (
+        <View key={rule.label} style={styles.ruleRow}>
+          <Ionicons
+            color={rule.isValid ? '#1E9E5A' : '#999'}
+            name={rule.isValid ? 'checkmark-circle' : 'ellipse-outline'}
+            size={18}
+          />
+          <Text style={[styles.ruleText, rule.isValid && styles.ruleTextValid]}>
+            {rule.label}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderForgotPassword = () => (
+    <>
+      <View style={styles.verifyCard}>
+        <Ionicons color={Colors.primary} name="key-outline" size={28} />
+        <Text style={styles.verifyTitle}>Reset your password</Text>
+        <Text style={styles.verifyText}>
+          Enter your account email and Clerk will send a one-time reset code.
+        </Text>
+      </View>
+
+      <View style={styles.fieldGroup}>
+        <Text style={styles.label}>Email</Text>
+        <TextInput
+          autoCapitalize="none"
+          autoComplete="email"
+          keyboardType="email-address"
+          onChangeText={setResetEmail}
+          placeholder="your@email.com"
+          placeholderTextColor="#777"
+          style={[defaultStyles.inputField, styles.input]}
+          textContentType="emailAddress"
+          value={resetEmail}
+        />
+      </View>
+
+      <TouchableOpacity
+        disabled={isLoading}
+        onPress={onSendResetCode}
+        style={[defaultStyles.btn, styles.primaryButton, isLoading && styles.disabledButton]}>
+        <Text style={defaultStyles.btnText}>{isLoading ? 'Sending code...' : 'Send OTP code'}</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity disabled={isLoading} onPress={switchToLogin} style={styles.forgotButton}>
+        <Text style={styles.switchText}>Back to login</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  const renderForgotCode = () => (
+    <>
+      <View style={styles.verifyCard}>
+        <Ionicons color={Colors.primary} name="mail-outline" size={28} />
+        <Text style={styles.verifyTitle}>Check your email</Text>
+        <Text style={styles.verifyText}>
+          We sent a password reset code to {resetEmail.trim() || 'your email address'}.
+        </Text>
+      </View>
+
+      <View style={styles.fieldGroup}>
+        <Text style={styles.label}>OTP code</Text>
+        <TextInput
+          keyboardType="number-pad"
+          onChangeText={setResetCode}
+          placeholder="Enter code"
+          placeholderTextColor="#777"
+          style={[defaultStyles.inputField, styles.input, styles.codeInput]}
+          value={resetCode}
+        />
+      </View>
+
+      <TouchableOpacity
+        disabled={isLoading}
+        onPress={onVerifyResetCode}
+        style={[defaultStyles.btn, styles.primaryButton, isLoading && styles.disabledButton]}>
+        <Text style={defaultStyles.btnText}>{isLoading ? 'Verifying...' : 'Verify OTP'}</Text>
+      </TouchableOpacity>
+
+      <View style={styles.verifyActions}>
+        <TouchableOpacity disabled={isLoading} onPress={onSendResetCode}>
+          <Text style={styles.switchLink}>Resend code</Text>
+        </TouchableOpacity>
+        <TouchableOpacity disabled={isLoading} onPress={switchToForgotPassword}>
+          <Text style={styles.switchText}>Change email</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  const renderForgotNewPassword = () => (
+    <>
+      <View style={styles.verifyCard}>
+        <Ionicons color={Colors.primary} name="lock-closed-outline" size={28} />
+        <Text style={styles.verifyTitle}>Create new password</Text>
+        <Text style={styles.verifyText}>
+          Your code is verified. Set a stronger password for your account.
+        </Text>
+      </View>
+
+      <View style={styles.fieldGroup}>
+        <Text style={styles.label}>New password</Text>
+        <TextInput
+          autoCapitalize="none"
+          autoComplete="new-password"
+          onChangeText={setResetPassword}
+          placeholder="Enter new password"
+          placeholderTextColor="#777"
+          secureTextEntry
+          style={[defaultStyles.inputField, styles.input]}
+          textContentType="newPassword"
+          value={resetPassword}
+        />
+      </View>
+
+      {renderPasswordRules(resetPasswordRules)}
+
+      <View style={styles.fieldGroup}>
+        <Text style={styles.label}>Confirm new password</Text>
+        <TextInput
+          autoCapitalize="none"
+          autoComplete="new-password"
+          onChangeText={setResetConfirmPassword}
+          placeholder="Repeat new password"
+          placeholderTextColor="#777"
+          secureTextEntry
+          style={[defaultStyles.inputField, styles.input]}
+          textContentType="newPassword"
+          value={resetConfirmPassword}
+        />
+      </View>
+
+      <TouchableOpacity
+        disabled={isLoading}
+        onPress={onSubmitResetPassword}
+        style={[defaultStyles.btn, styles.primaryButton, isLoading && styles.disabledButton]}>
+        <Text style={defaultStyles.btnText}>{isLoading ? 'Updating...' : 'Set new password'}</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity disabled={isLoading} onPress={() => setMode('forgotCode')} style={styles.forgotButton}>
+        <Text style={styles.switchText}>Back to OTP code</Text>
+      </TouchableOpacity>
+    </>
+  );
+
+  const renderContent = () => {
+    if (mode === 'login') {
+      return renderLogin();
+    }
+
+    if (mode === 'signup') {
+      return renderSignUp();
+    }
+
+    if (mode === 'verify') {
+      return renderVerify();
+    }
+
+    if (mode === 'forgot') {
+      return renderForgotPassword();
+    }
+
+    if (mode === 'forgotCode') {
+      return renderForgotCode();
+    }
+
+    return renderForgotNewPassword();
+  };
+
+  const title =
+    mode === 'login'
+      ? 'Welcome back'
+      : mode === 'signup'
+        ? 'Create your account'
+        : mode === 'verify'
+          ? 'Verify your email'
+          : mode === 'forgot'
+            ? 'Forgot password'
+            : mode === 'forgotCode'
+              ? 'Enter OTP code'
+              : 'New password';
+
+  const subtitle =
+    mode === 'login'
+      ? 'Log in with email and password, or continue with a social account.'
+      : mode === 'signup'
+        ? 'Use a strong password. We will send an OTP code to your email.'
+        : mode === 'verify'
+          ? 'Enter the code to finish creating your profile.'
+          : mode === 'forgot'
+            ? 'We will help you securely reset your password with an email OTP.'
+            : mode === 'forgotCode'
+              ? 'Type the code Clerk sent to your email.'
+              : 'Choose a new password that matches the requirements.';
+
+  const shouldShowOAuth = mode === 'login' || mode === 'signup';
+
   return (
     <ScrollView
       contentContainerStyle={styles.container}
       contentInsetAdjustmentBehavior="automatic"
       keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>
-        {mode === 'login'
-          ? 'Welcome back'
-          : mode === 'signup'
-            ? 'Create your account'
-            : 'Verify your email'}
-      </Text>
-      <Text style={styles.subtitle}>
-        {mode === 'login'
-          ? 'Log in with email and password, or continue with a social account.'
-          : mode === 'signup'
-            ? 'Use a strong password. We will send an OTP code to your email.'
-            : 'Enter the code to finish creating your profile.'}
-      </Text>
+      <Text style={styles.title}>{title}</Text>
+      <Text style={styles.subtitle}>{subtitle}</Text>
 
-      {mode === 'login' ? renderLogin() : mode === 'signup' ? renderSignUp() : renderVerify()}
+      {renderContent()}
 
-      {mode !== 'verify' ? (
+      {shouldShowOAuth ? (
         <>
           <View style={styles.separatorView}>
             <View style={styles.separatorLine} />
@@ -440,6 +873,13 @@ const styles = StyleSheet.create({
   form: {
     gap: 14,
   },
+  nameRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  nameField: {
+    flex: 1,
+  },
   fieldGroup: {
     gap: 8,
   },
@@ -473,6 +913,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 6,
     justifyContent: 'center',
+  },
+  forgotButton: {
+    alignItems: 'center',
+    paddingVertical: 2,
   },
   switchText: {
     color: '#666',

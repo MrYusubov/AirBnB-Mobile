@@ -2,12 +2,12 @@ import Colors from '@/constants/Colors';
 import { defaultStyles } from '@/constants/Styles';
 import { uploadImageToCloudinary } from '@/lib/cloudinary';
 import { useIsAdmin } from '@/lib/admin';
-import { upsertUser } from '@/lib/database/listings';
+import { getUnreadNotificationCount, upsertUser } from '@/lib/database/listings';
 import { useAuth, useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -60,7 +60,6 @@ const ProfilePage = () => {
 
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [username, setUsername] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -68,6 +67,7 @@ const ProfilePage = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   const passwordRules = useMemo(
     () => [
@@ -89,7 +89,6 @@ const ProfilePage = () => {
 
     setFirstName(user.firstName ?? '');
     setLastName(user.lastName ?? '');
-    setUsername(user.username ?? '');
     setAvatarUrl(nextAvatarUrl);
 
     upsertUser({
@@ -102,6 +101,33 @@ const ProfilePage = () => {
       console.log('Failed to sync user to SQLite', error);
     });
   }, [user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const loadUnreadNotifications = async () => {
+        if (!user?.id) {
+          setUnreadNotifications(0);
+          return;
+        }
+
+        const count = await getUnreadNotificationCount(user.id);
+
+        if (isActive) {
+          setUnreadNotifications(count);
+        }
+      };
+
+      loadUnreadNotifications().catch((error) => {
+        console.log('Failed to load notifications count', error);
+      });
+
+      return () => {
+        isActive = false;
+      };
+    }, [user?.id])
+  );
 
   const syncUserToDatabase = async (imageUrl = avatarUrl) => {
     if (!user) {
@@ -161,14 +187,11 @@ const ProfilePage = () => {
       return;
     }
 
-    const trimmedUsername = username.trim();
-
     try {
       setIsSavingProfile(true);
       await user.update({
         firstName: firstName.trim() || null,
         lastName: lastName.trim() || null,
-        username: trimmedUsername || null,
         unsafeMetadata: {
           ...(user.unsafeMetadata as Record<string, unknown>),
           profileImageUrl: avatarUrl || getCustomProfileImageUrl(user.unsafeMetadata) || undefined,
@@ -249,7 +272,22 @@ const ProfilePage = () => {
       contentInsetAdjustmentBehavior="automatic"
       keyboardShouldPersistTaps="handled">
       <View style={styles.header}>
-        <Text style={styles.pageTitle}>Profile</Text>
+        <View style={styles.headerTop}>
+          <Text style={styles.pageTitle}>Profile</Text>
+          <TouchableOpacity
+            activeOpacity={0.82}
+            onPress={() => router.push('/notifications')}
+            style={styles.notificationButton}>
+            <Ionicons name="notifications-outline" size={24} color={Colors.dark} />
+            {unreadNotifications > 0 ? (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                </Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        </View>
         <Text style={styles.pageSubtitle}>Manage your account, hosting tools, and security.</Text>
       </View>
 
@@ -272,7 +310,9 @@ const ProfilePage = () => {
         </TouchableOpacity>
 
         <View style={styles.heroText}>
-          <Text style={styles.nameText}>{user.fullName ?? (username || 'Your profile')}</Text>
+          <Text style={styles.nameText}>
+            {[firstName, lastName].filter(Boolean).join(' ') || user.fullName || 'Your profile'}
+          </Text>
           <Text style={styles.emailText}>{currentEmail}</Text>
           <Text style={styles.memberText}>
             Since {user.createdAt ? user.createdAt.toLocaleDateString('en-US') : 'today'}
@@ -284,22 +324,12 @@ const ProfilePage = () => {
         <View style={styles.cardHeader}>
           <View>
             <Text style={styles.cardTitle}>Account details</Text>
-            <Text style={styles.cardSubtitle}>Username and profile info shown inside the app.</Text>
+            <Text style={styles.cardSubtitle}>First and last name shown inside the app.</Text>
           </View>
           <Ionicons name="person-outline" size={22} color={Colors.primary} />
         </View>
 
         <View style={styles.form}>
-          <Field label="Username">
-            <TextInput
-              autoCapitalize="none"
-              onChangeText={setUsername}
-              placeholder="Choose username"
-              placeholderTextColor="#888"
-              style={styles.input}
-              value={username}
-            />
-          </Field>
           <View style={styles.row}>
             <Field label="First name" style={styles.halfField}>
               <TextInput
@@ -487,10 +517,43 @@ const styles = StyleSheet.create({
   header: {
     gap: 6,
   },
+  headerTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   pageTitle: {
     color: Colors.dark,
     fontFamily: 'mon-b',
     fontSize: 30,
+  },
+  notificationButton: {
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 22,
+    height: 44,
+    justifyContent: 'center',
+    position: 'relative',
+    width: 44,
+  },
+  notificationBadge: {
+    alignItems: 'center',
+    backgroundColor: Colors.primary,
+    borderColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 2,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+    position: 'absolute',
+    right: -2,
+    top: -2,
+  },
+  notificationBadgeText: {
+    color: '#fff',
+    fontFamily: 'mon-b',
+    fontSize: 10,
   },
   pageSubtitle: {
     color: Colors.grey,

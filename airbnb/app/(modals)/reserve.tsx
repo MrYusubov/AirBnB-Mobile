@@ -134,6 +134,7 @@ const ReservePage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
+  const [infants, setInfants] = useState(0);
   const [checkIn, setCheckIn] = useState(todayIso);
   const [checkOut, setCheckOut] = useState<string | null>(null);
   const [activeDateField, setActiveDateField] = useState<'checkIn' | 'checkOut'>('checkOut');
@@ -280,6 +281,7 @@ const ReservePage = () => {
         checkOut,
         adults: String(adults),
         children: String(children),
+        infants: String(infants),
         totalPrice: String(totalPrice),
         nights: String(nights),
       },
@@ -288,6 +290,7 @@ const ReservePage = () => {
 
   const changeAdults = (delta: number) => setAdults((value) => Math.max(1, value + delta));
   const changeChildren = (delta: number) => setChildren((value) => Math.max(0, value + delta));
+  const changeInfants = (delta: number) => setInfants((value) => Math.max(0, value + delta));
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content} contentInsetAdjustmentBehavior="automatic">
@@ -300,7 +303,7 @@ const ReservePage = () => {
           <View style={styles.hero}>
             <Text style={styles.title}>{listing?.name ?? 'Reservation'}</Text>
             <Text style={styles.subtitle}>
-              EUR {nightlyPrice} night - {listing?.smart_location ?? 'Selected home'}
+              ${nightlyPrice} night - {listing?.smart_location ?? 'Selected home'}
             </Text>
           </View>
 
@@ -321,6 +324,14 @@ const ReservePage = () => {
               onMinus={() => changeChildren(-1)}
               onPlus={() => changeChildren(1)}
               minusDisabled={children <= 0}
+            />
+            <GuestRow
+              title="Infants"
+              subtitle="Under 2"
+              value={infants}
+              onMinus={() => changeInfants(-1)}
+              onPlus={() => changeInfants(1)}
+              minusDisabled={infants <= 0}
             />
           </View>
 
@@ -421,12 +432,12 @@ const ReservePage = () => {
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Price details</Text>
             <PriceRow
-              label={canPay ? `EUR ${nightlyPrice} x ${nights} night${nights > 1 ? 's' : ''}` : 'Select checkout date'}
-              value={canPay ? `EUR ${totalPrice}` : 'EUR 0'}
+              label={canPay ? `$${nightlyPrice} x ${nights} night${nights > 1 ? 's' : ''}` : 'Select checkout date'}
+              value={canPay ? `$${totalPrice}` : '$0'}
             />
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>EUR {totalPrice}</Text>
+              <Text style={styles.totalValue}>${totalPrice}</Text>
             </View>
           </View>
 

@@ -12,9 +12,10 @@ import {
 import { useUser } from '@clerk/clerk-expo';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+const RESERVATIONS_PAGE_SIZE = 6;
 const toDate = (value: string) => new Date(`${value}T00:00:00`);
 const toIsoDate = (date: Date) => {
   const year = date.getFullYear();
@@ -25,14 +26,18 @@ const toIsoDate = (date: Date) => {
 };
 const addDays = (date: Date, days: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
 const addMonths = (date: Date, months: number) => new Date(date.getFullYear(), date.getMonth() + months, 1);
-const formatMoney = (value: number | string | null | undefined) => `EUR ${Number(value ?? 0).toFixed(0)}`;
+const formatMoney = (value: number | string | null | undefined) => `$${Number(value ?? 0).toFixed(0)}`;
 const formatDate = (value: string) =>
   toDate(value).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
   });
+const formatGuests = (reservation: HostReservation) =>
+  `${reservation.adults} adult${reservation.adults > 1 ? 's' : ''}, ${reservation.children} children, ${reservation.infants} infant${reservation.infants === 1 ? '' : 's'}`;
 const isAcceptedReservation = (reservation: HostReservation) =>
   reservation.status === 'accepted' || reservation.status === 'paid';
+const isCompletedReservation = (reservation: HostReservation, todayIso: string) =>
+  isAcceptedReservation(reservation) && reservation.check_out <= todayIso;
 
 const getMonthInfo = (monthDate: Date, reservations: HostReservation[]) => {
   const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
@@ -70,6 +75,7 @@ export default function ManageHousesPage() {
   const [houses, setHouses] = useState<Listing[]>([]);
   const [reservations, setReservations] = useState<HostReservation[]>([]);
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
+  const [reservationPage, setReservationPage] = useState(1);
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
@@ -113,6 +119,15 @@ export default function ManageHousesPage() {
 
   const pendingReservations = reservations.filter((reservation) => reservation.status === 'pending');
   const acceptedReservations = reservations.filter(isAcceptedReservation);
+  const todayIso = toIsoDate(new Date());
+  const reservationPageCount = Math.max(1, Math.ceil(reservations.length / RESERVATIONS_PAGE_SIZE));
+  const activeReservationPage = Math.min(reservationPage, reservationPageCount);
+  const reservationStartIndex = (activeReservationPage - 1) * RESERVATIONS_PAGE_SIZE;
+  const paginatedReservations = reservations.slice(
+    reservationStartIndex,
+    reservationStartIndex + RESERVATIONS_PAGE_SIZE
+  );
+  const reservationEndIndex = reservationStartIndex + paginatedReservations.length;
   const acceptedRevenue = acceptedReservations.reduce(
     (sum, reservation) => sum + Number(reservation.total_price ?? 0),
     0
@@ -125,6 +140,10 @@ export default function ManageHousesPage() {
     () => getMonthInfo(visibleMonth, reservations),
     [reservations, visibleMonth]
   );
+
+  useEffect(() => {
+    setReservationPage((page) => Math.min(page, reservationPageCount));
+  }, [reservationPageCount]);
 
   const onSavePrice = async (house: Listing) => {
     if (!user?.id) {
@@ -265,14 +284,26 @@ export default function ManageHousesPage() {
         </View>
       ) : (
         <View style={styles.reservationList}>
-          {reservations.map((reservation) => (
+          <Text style={styles.paginationSummary}>
+            Showing {reservationStartIndex + 1}-{reservationEndIndex} of {reservations.length}
+          </Text>
+          {paginatedReservations.map((reservation) => (
             <ReservationCard
               key={reservation.id}
+              isCompleted={isCompletedReservation(reservation, todayIso)}
               reservation={reservation}
               onAccept={() => onSetReservationStatus(reservation, 'accepted')}
               onCancel={() => onSetReservationStatus(reservation, 'cancelled')}
             />
           ))}
+          {reservationPageCount > 1 ? (
+            <PaginationControls
+              onNext={() => setReservationPage(Math.min(reservationPageCount, activeReservationPage + 1))}
+              onPrevious={() => setReservationPage(Math.max(1, activeReservationPage - 1))}
+              page={activeReservationPage}
+              pageCount={reservationPageCount}
+            />
+          ) : null}
         </View>
       )}
 
@@ -435,14 +466,18 @@ const HouseCard = ({
 
 const ReservationCard = ({
   reservation,
+  isCompleted,
   onAccept,
   onCancel,
 }: {
   reservation: HostReservation;
+  isCompleted: boolean;
   onAccept: () => void;
   onCancel: () => void;
 }) => {
-  const statusLabel = reservation.status === 'paid' ? 'accepted' : reservation.status;
+  const statusLabel = isCompleted ? 'completed' : reservation.status === 'paid' ? 'accepted' : reservation.status;
+  const canCancelAcceptedReservation =
+    (reservation.status === 'accepted' || reservation.status === 'paid') && !isCompleted;
 
   return (
     <View style={styles.reservationCard}>
@@ -460,6 +495,7 @@ const ReservationCard = ({
           <Text style={styles.reservationDates}>
             {formatDate(reservation.check_in)} → {formatDate(reservation.check_out)}
           </Text>
+          <Text style={styles.reservationGuests}>{formatGuests(reservation)}</Text>
           <Text style={styles.reservationPrice}>{formatMoney(reservation.total_price)}</Text>
         </View>
       </View>
@@ -477,12 +513,55 @@ const ReservationCard = ({
               <Ionicons name="close" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
-        ) : reservation.status === 'accepted' || reservation.status === 'paid' ? (
+        ) : canCancelAcceptedReservation ? (
           <TouchableOpacity style={[styles.iconAction, styles.cancelIcon]} onPress={onCancel}>
             <Ionicons name="close" size={22} color="#fff" />
           </TouchableOpacity>
         ) : null}
       </View>
+    </View>
+  );
+};
+
+const PaginationControls = ({
+  page,
+  pageCount,
+  onPrevious,
+  onNext,
+}: {
+  page: number;
+  pageCount: number;
+  onPrevious: () => void;
+  onNext: () => void;
+}) => {
+  const isFirstPage = page <= 1;
+  const isLastPage = page >= pageCount;
+
+  return (
+    <View style={styles.paginationCard}>
+      <TouchableOpacity
+        disabled={isFirstPage}
+        onPress={onPrevious}
+        style={[styles.paginationButton, isFirstPage && styles.paginationButtonDisabled]}>
+        <Ionicons name="chevron-back" size={18} color={isFirstPage ? '#a8a8a8' : Colors.dark} />
+        <Text style={[styles.paginationButtonText, isFirstPage && styles.paginationButtonTextDisabled]}>
+          Prev
+        </Text>
+      </TouchableOpacity>
+
+      <Text style={styles.paginationPageText}>
+        Page {page} / {pageCount}
+      </Text>
+
+      <TouchableOpacity
+        disabled={isLastPage}
+        onPress={onNext}
+        style={[styles.paginationButton, isLastPage && styles.paginationButtonDisabled]}>
+        <Text style={[styles.paginationButtonText, isLastPage && styles.paginationButtonTextDisabled]}>
+          Next
+        </Text>
+        <Ionicons name="chevron-forward" size={18} color={isLastPage ? '#a8a8a8' : Colors.dark} />
+      </TouchableOpacity>
     </View>
   );
 };
@@ -699,6 +778,12 @@ const styles = StyleSheet.create({
   reservationList: {
     gap: 12,
   },
+  paginationSummary: {
+    color: Colors.grey,
+    fontFamily: 'mon-sb',
+    fontSize: 12,
+    textAlign: 'right',
+  },
   reservationCard: {
     alignItems: 'center',
     borderColor: '#e1e1e1',
@@ -738,6 +823,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   reservationDates: {
+    color: Colors.grey,
+    fontFamily: 'mon',
+    fontSize: 12,
+  },
+  reservationGuests: {
     color: Colors.grey,
     fontFamily: 'mon',
     fontSize: 12,
@@ -787,6 +877,46 @@ const styles = StyleSheet.create({
   },
   cancelIcon: {
     backgroundColor: '#b42318',
+  },
+  paginationCard: {
+    alignItems: 'center',
+    backgroundColor: '#fafafa',
+    borderColor: '#e4e4e4',
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'space-between',
+    padding: 10,
+  },
+  paginationButton: {
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 999,
+    flexDirection: 'row',
+    gap: 4,
+    minWidth: 92,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  paginationButtonDisabled: {
+    backgroundColor: '#f0f0f0',
+  },
+  paginationButtonText: {
+    color: Colors.dark,
+    fontFamily: 'mon-b',
+    fontSize: 12,
+  },
+  paginationButtonTextDisabled: {
+    color: '#a8a8a8',
+  },
+  paginationPageText: {
+    color: Colors.dark,
+    flex: 1,
+    fontFamily: 'mon-b',
+    fontSize: 12,
+    textAlign: 'center',
   },
   chartCard: {
     borderColor: '#e0e0e0',

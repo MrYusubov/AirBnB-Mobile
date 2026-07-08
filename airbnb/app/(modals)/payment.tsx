@@ -18,6 +18,8 @@ import { createBooking, upsertUser } from '@/lib/database/listings';
 
 const asString = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value ?? '');
 const onlyDigits = (value: string) => value.replace(/\D/g, '');
+const formatGuests = (adults: number, children: number, infants: number) =>
+  `${adults} adult${adults > 1 ? 's' : ''}, ${children} children, ${infants} infant${infants === 1 ? '' : 's'}`;
 
 const formatCardNumber = (value: string) =>
   onlyDigits(value)
@@ -52,6 +54,7 @@ const PaymentPage = () => {
   const checkOut = asString(params.checkOut);
   const adults = Number(asString(params.adults)) || 1;
   const children = Number(asString(params.children)) || 0;
+  const infants = Number(asString(params.infants)) || 0;
   const totalPrice = Number(asString(params.totalPrice)) || 0;
   const nights = Number(asString(params.nights)) || 1;
 
@@ -121,6 +124,7 @@ const PaymentPage = () => {
         check_out: checkOut,
         adults,
         children,
+        infants,
         total_price: totalPrice,
         status: 'pending',
       });
@@ -129,7 +133,7 @@ const PaymentPage = () => {
       startSuccessAnimation();
 
       setTimeout(() => {
-        router.replace('/');
+        router.dismissTo('/');
       }, 3000);
     } catch (error) {
       Alert.alert('Payment failed', error instanceof Error ? error.message : 'Try again');
@@ -157,10 +161,10 @@ const PaymentPage = () => {
       <View style={styles.summaryCard}>
         <Text style={styles.summaryTitle}>Reservation summary</Text>
         <SummaryRow label="Dates" value={`${checkIn} - ${checkOut}`} />
-        <SummaryRow label="Guests" value={`${adults} adult${adults > 1 ? 's' : ''}, ${children} children`} />
+        <SummaryRow label="Guests" value={formatGuests(adults, children, infants)} />
         <SummaryRow label="Nights" value={String(nights)} />
         <View style={styles.summaryDivider} />
-        <SummaryRow label="Total" value={`EUR ${totalPrice}`} strong />
+        <SummaryRow label="Total" value={`$${totalPrice}`} strong />
       </View>
 
       <View style={styles.cardForm}>
@@ -208,7 +212,7 @@ const PaymentPage = () => {
       </View>
 
       <TouchableOpacity style={[defaultStyles.btn, isPaying && styles.disabledButton]} disabled={isPaying} onPress={onPay}>
-        <Text style={defaultStyles.btnText}>{isPaying ? 'Paying...' : `Pay EUR ${totalPrice}`}</Text>
+        <Text style={defaultStyles.btnText}>{isPaying ? 'Paying...' : `Pay $${totalPrice}`}</Text>
       </TouchableOpacity>
     </ScrollView>
   );

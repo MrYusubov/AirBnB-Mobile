@@ -1,5 +1,5 @@
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -8,12 +8,13 @@ import {
   Text,
   StyleSheet,
   Image,
-  Dimensions,
   TouchableOpacity,
   Share,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/Colors';
 import Animated, {
   SlideInDown,
@@ -33,7 +34,6 @@ import {
 import { useUser } from '@clerk/clerk-expo';
 import ListingReviews from '@/components/ListingReviews';
 
-const { width } = Dimensions.get('window');
 const IMG_HEIGHT = 300;
 
 const DetailsPage = () => {
@@ -41,12 +41,13 @@ const DetailsPage = () => {
   const listingId = Array.isArray(id) ? id[0] : id;
   const router = useRouter();
   const { user } = useUser();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [listing, setListing] = useState<Listing | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWishlisted, setIsWishlisted] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
-  const navigation = useNavigation();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollViewOffset(scrollRef);
 
@@ -179,38 +180,6 @@ const DetailsPage = () => {
     };
   }, [listingId, user?.id]);
 
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerTitle: '',
-      headerTransparent: true,
-
-      headerBackground: () => (
-        <Animated.View style={[headerAnimatedStyle, styles.header]}></Animated.View>
-      ),
-      headerRight: () => (
-        <View style={styles.bar}>
-          <TouchableOpacity style={styles.roundButton} onPress={shareListing}>
-            <Ionicons name="share-outline" size={22} color={'#000'} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.roundButton} onPress={onToggleWishlist}>
-            <Ionicons
-              name={isWishlisted ? 'heart' : 'heart-outline'}
-              size={22}
-              color={isWishlisted ? Colors.primary : '#000'}
-            />
-          </TouchableOpacity>
-        </View>
-      ),
-      headerLeft: () => (
-        <TouchableOpacity
-          style={[styles.roundButton, styles.backButton]}
-          onPress={() => navigation.goBack()}>
-          <Ionicons name="chevron-back" size={24} color={'#000'} />
-        </TouchableOpacity>
-      ),
-    });
-  }, [isWishlisted, navigation, onToggleWishlist, shareListing]);
-
   const imageAnimatedStyle = useAnimatedStyle(() => {
     return {
       transform: [
@@ -262,6 +231,7 @@ const DetailsPage = () => {
   if (isLoading) {
     return (
       <View style={[styles.container, styles.centered]}>
+        <Stack.Screen options={{ headerShown: false }} />
         <Text style={{ fontFamily: 'mon-sb' }}>Loading listing...</Text>
       </View>
     );
@@ -270,6 +240,7 @@ const DetailsPage = () => {
   if (!listing) {
     return (
       <View style={[styles.container, styles.centered]}>
+        <Stack.Screen options={{ headerShown: false }} />
         <Text style={{ fontFamily: 'mon-sb' }}>Listing not found</Text>
       </View>
     );
@@ -277,6 +248,7 @@ const DetailsPage = () => {
 
   return (
     <View style={styles.container}>
+      <Stack.Screen options={{ headerShown: false }} />
       <Animated.ScrollView
         contentContainerStyle={{ paddingBottom: 100 }}
         ref={scrollRef}
@@ -379,6 +351,45 @@ const DetailsPage = () => {
         </View>
       </Animated.ScrollView>
 
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.floatingHeaderBackground,
+          { height: insets.top + 72 },
+          headerAnimatedStyle,
+        ]}
+      />
+      <View style={[styles.topControls, { top: insets.top + 12 }]}>
+        <TouchableOpacity
+          accessibilityLabel="Go back"
+          hitSlop={12}
+          style={styles.iconButton}
+          onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={26} color="#000" />
+        </TouchableOpacity>
+
+        <View style={styles.topActions}>
+          <TouchableOpacity
+            accessibilityLabel="Share listing"
+            hitSlop={12}
+            style={styles.iconButton}
+            onPress={shareListing}>
+            <Ionicons name="share-outline" size={23} color="#000" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityLabel={isWishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+            hitSlop={12}
+            style={styles.iconButton}
+            onPress={onToggleWishlist}>
+            <Ionicons
+              name={isWishlisted ? 'heart' : 'heart-outline'}
+              size={24}
+              color={isWishlisted ? Colors.primary : '#000'}
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+
       <Modal
         visible={isGalleryOpen}
         animationType="fade"
@@ -412,7 +423,7 @@ const DetailsPage = () => {
         <View
           style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
           <TouchableOpacity style={styles.footerText}>
-            <Text style={styles.footerPrice}>€{listing.price}</Text>
+            <Text style={styles.footerPrice}>{`$${listing.price}`}</Text>
             <Text>night</Text>
           </TouchableOpacity>
 
@@ -438,7 +449,7 @@ const styles = StyleSheet.create({
   },
   image: {
     height: IMG_HEIGHT,
-    width: width,
+    width: '100%',
   },
   imagePlaceholder: {
     backgroundColor: '#eeeeee',
@@ -535,34 +546,41 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: 'mon-sb',
   },
-  roundButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  floatingHeaderBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    backgroundColor: '#fff',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0, 0, 0, 0.12)',
+  },
+  topControls: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    elevation: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+  },
+  topActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  iconButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: 'rgba(255, 255, 255, 0.96)',
     alignItems: 'center',
     justifyContent: 'center',
-    color: Colors.primary,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(0, 0, 0, 0.08)',
-  },
-  backButton: {
-    marginLeft: 8,
-  },
-  bar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    paddingRight: 8,
-    paddingVertical: 8,
-    paddingLeft: 8,
-  },
-  header: {
-    backgroundColor: '#fff',
-    height: 100,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.grey,
   },
 
   description: {

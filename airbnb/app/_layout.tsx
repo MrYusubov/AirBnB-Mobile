@@ -74,7 +74,10 @@ function RootLayoutNav() {
   }, [isLoaded, isSignedIn, router]);
 
   return (
-    <Stack>
+    <Stack
+      screenOptions={{
+        headerBackButtonDisplayMode: 'minimal',
+      }}>
       <Stack.Screen
         name="(modals)/login"
         options={{
@@ -114,6 +117,15 @@ function RootLayoutNav() {
         name="host/manage-houses"
         options={{
           title: 'Manage houses',
+          headerTitleStyle: {
+            fontFamily: 'mon-sb',
+          },
+        }}
+      />
+      <Stack.Screen
+        name="notifications"
+        options={{
+          title: 'Notifications',
           headerTitleStyle: {
             fontFamily: 'mon-sb',
           },

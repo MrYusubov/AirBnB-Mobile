@@ -23,7 +23,9 @@ const formatDate = (value: string) =>
     year: 'numeric',
   });
 
-const formatMoney = (value: number | string | null | undefined) => `EUR ${Number(value ?? 0).toFixed(0)}`;
+const formatMoney = (value: number | string | null | undefined) => `$${Number(value ?? 0).toFixed(0)}`;
+const formatGuests = (trip: UserTrip) =>
+  `${trip.adults} adult${trip.adults > 1 ? 's' : ''}, ${trip.children} children, ${trip.infants} infant${trip.infants === 1 ? '' : 's'}`;
 
 const getNights = (checkIn: string, checkOut: string) => {
   const start = new Date(`${checkIn}T00:00:00`).getTime();
@@ -257,7 +259,7 @@ const TripCard = ({
         <View style={styles.metaGrid}>
           <MetaPill icon="calendar-outline" label={`${formatDate(trip.check_in)} -> ${formatDate(trip.check_out)}`} />
           <MetaPill icon="moon-outline" label={`${nights} night${nights > 1 ? 's' : ''}`} />
-          <MetaPill icon="people-outline" label={`${trip.adults} adult${trip.adults > 1 ? 's' : ''}, ${trip.children} children`} />
+          <MetaPill icon="people-outline" label={formatGuests(trip)} />
         </View>
 
         {reviewed ? (
