@@ -24,7 +24,8 @@ import {
 } from '@/lib/exploreFilters';
 
 interface Props {
-  onCategoryChanged: (categoryId: string) => void;
+  activeCategoryId: string | null;
+  onCategoryChanged: (categoryId: string | null) => void;
   filters: ExploreFilters;
   onFiltersChanged: (filters: ExploreFilters) => void;
   searchGuests: number;
@@ -41,6 +42,7 @@ const bedroomOptions = [0, 1, 2, 3, 4];
 const onlyDigits = (value: string) => value.replace(/\D/g, '');
 
 const ExploreHeader = ({
+  activeCategoryId,
   onCategoryChanged,
   filters,
   onFiltersChanged,
@@ -50,7 +52,6 @@ const ExploreHeader = ({
   const scrollRef = useRef<ScrollView>(null);
   const itemsRef = useRef<Array<ViewInstance | null>>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [activeIndex, setActiveIndex] = useState(0);
   const [isFilterVisible, setIsFilterVisible] = useState(false);
   const [draftFilters, setDraftFilters] = useState<ExploreFilters>(filters);
   const activeFilterCount = getActiveFilterCount(filters);
@@ -88,13 +89,17 @@ const ExploreHeader = ({
       return;
     }
 
-    const selected = itemsRef.current[index];
-    setActiveIndex(index);
-    selected?.measure((x) => {
-      scrollRef.current?.scrollTo({ x: x - 16, y: 0, animated: true });
-    });
+    const nextCategoryId = activeCategoryId === category.id ? null : category.id;
+
+    if (nextCategoryId) {
+      const selected = itemsRef.current[index];
+      selected?.measure((x) => {
+        scrollRef.current?.scrollTo({ x: x - 16, y: 0, animated: true });
+      });
+    }
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    onCategoryChanged(category.id);
+    onCategoryChanged(nextCategoryId);
   };
 
   const openFilters = () => {
@@ -165,24 +170,28 @@ const ExploreHeader = ({
             gap: 20,
             paddingHorizontal: 16,
           }}>
-          {categories.map((item, index) => (
-            <TouchableOpacity
-              ref={(el) => {
-                itemsRef.current[index] = el;
-              }}
-              key={item.id}
-              style={activeIndex === index ? styles.categoriesBtnActive : styles.categoriesBtn}
-              onPress={() => selectCategory(index)}>
-              <MaterialIcons
-                name={item.icon as any}
-                size={24}
-                color={activeIndex === index ? '#000' : Colors.grey}
-              />
-              <Text style={activeIndex === index ? styles.categoryTextActive : styles.categoryText}>
-                {item.title}
-              </Text>
-            </TouchableOpacity>
-          ))}
+          {categories.map((item, index) => {
+            const isActive = activeCategoryId === item.id;
+
+            return (
+              <TouchableOpacity
+                ref={(el) => {
+                  itemsRef.current[index] = el;
+                }}
+                key={item.id}
+                style={isActive ? styles.categoriesBtnActive : styles.categoriesBtn}
+                onPress={() => selectCategory(index)}>
+                <MaterialIcons
+                  name={item.icon as any}
+                  size={24}
+                  color={isActive ? '#000' : Colors.grey}
+                />
+                <Text style={isActive ? styles.categoryTextActive : styles.categoryText}>
+                  {item.title}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </ScrollView>
       </View>
 

@@ -4,8 +4,9 @@ import ListingsBottomSheet from '@/components/ListingsBottomSheet';
 import ListingsMap from '@/components/ListingsMap';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import ExploreHeader from '@/components/ExploreHeader';
-import { getListings, Listing, ListingsGeo } from '@/lib/database/listings';
+import { getListings, Listing, ListingsGeo, seedDemoListingsForExistingUsers, upsertUser } from '@/lib/database/listings';
 import { defaultExploreFilters, ExploreFilters } from '@/lib/exploreFilters';
+import { useUser } from '@clerk/clerk-expo';
 
 const emptyListingsGeo: ListingsGeo = {
   type: 'FeatureCollection' as const,
@@ -126,11 +127,12 @@ const createListingsGeo = (listings: Listing[]): ListingsGeo => ({
 
 const Page = () => {
   const router = useRouter();
+  const { user } = useUser();
   const params = useLocalSearchParams<{ search?: string; guests?: string }>();
   const routeSearch = asString(params.search).trim();
   const routeGuests = asString(params.guests);
   const [items, setItems] = useState<Listing[]>([]);
-  const [categoryId, setCategoryId] = useState<string>('tiny-homes');
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [filters, setFilters] = useState<ExploreFilters>(defaultExploreFilters);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -151,6 +153,17 @@ const Page = () => {
     useCallback(() => {
       let isActive = true;
       const loadListings = async () => {
+        if (user) {
+          await upsertUser({
+            id: user.id,
+            email: user.primaryEmailAddress?.emailAddress ?? user.emailAddresses[0]?.emailAddress ?? null,
+            first_name: user.firstName,
+            last_name: user.lastName,
+            image_url: user.imageUrl,
+          });
+        }
+
+        await seedDemoListingsForExistingUsers();
         const listings = await getListings('accepted', searchQuery ? null : categoryId);
 
         if (!isActive) {
@@ -167,7 +180,7 @@ const Page = () => {
       return () => {
         isActive = false;
       };
-    }, [categoryId, searchQuery])
+    }, [categoryId, searchQuery, user])
   );
 
   const filteredItems = useMemo(
@@ -179,7 +192,7 @@ const Page = () => {
     [filteredItems]
   );
 
-  const onDataChanged = (nextCategoryId: string) => {
+  const onDataChanged = (nextCategoryId: string | null) => {
     setSearchQuery('');
     router.setParams({ search: undefined, guests: undefined });
     setCategoryId(nextCategoryId);
@@ -196,6 +209,7 @@ const Page = () => {
         options={{
           header: () => (
             <ExploreHeader
+              activeCategoryId={categoryId}
               filters={filters}
               onCategoryChanged={onDataChanged}
               onFiltersChanged={setFilters}
@@ -208,7 +222,7 @@ const Page = () => {
       <ListingsMap listings={geoItems} />
       <ListingsBottomSheet
         listings={filteredItems}
-        category={categoryId}
+        category={categoryId ?? 'all'}
         onListingDeleted={onListingDeleted}
       />
     </View>

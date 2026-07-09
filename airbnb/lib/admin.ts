@@ -1,6 +1,6 @@
 import { useUser } from '@clerk/clerk-expo';
 
-export const ADMIN_EMAIL = 'yhumbet05@gmail.com';
+export const ADMIN_EMAIL = 'airbnb.llc.aze@gmail.com';
 
 const normalizeEmail = (email?: string | null) => email?.trim().toLowerCase() ?? '';
 

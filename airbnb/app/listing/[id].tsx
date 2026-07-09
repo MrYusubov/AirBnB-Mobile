@@ -48,6 +48,7 @@ const DetailsPage = () => {
   const [isWishlisted, setIsWishlisted] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
+  const [isMapInteracting, setIsMapInteracting] = useState(false);
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollViewOffset(scrollRef);
 
@@ -252,6 +253,7 @@ const DetailsPage = () => {
       <Animated.ScrollView
         contentContainerStyle={{ paddingBottom: 100 }}
         ref={scrollRef}
+        scrollEnabled={!isMapInteracting}
         scrollEventThrottle={16}>
         <TouchableOpacity
           activeOpacity={0.92}
@@ -333,13 +335,17 @@ const DetailsPage = () => {
                 <MapView
                   style={StyleSheet.absoluteFillObject}
                   initialRegion={locationRegion}
-                  scrollEnabled={false}
-                  zoomEnabled={false}
-                  pitchEnabled={false}
-                  rotateEnabled={false}>
+                  scrollEnabled
+                  zoomEnabled
+                  pitchEnabled
+                  rotateEnabled
+                  onTouchStart={() => setIsMapInteracting(true)}
+                  onTouchEnd={() => setIsMapInteracting(false)}
+                  onTouchCancel={() => setIsMapInteracting(false)}>
                   <Marker coordinate={{ latitude, longitude }} />
                 </MapView>
               </View>
+              <Text style={styles.mapHint}>Drag or pinch the map to explore the exact area.</Text>
               <Text style={styles.mapAddress}>{listing.smart_location}</Text>
             </>
           ) : (
@@ -606,6 +612,12 @@ const styles = StyleSheet.create({
     color: Colors.grey,
     marginTop: 10,
     lineHeight: 20,
+  },
+  mapHint: {
+    fontFamily: 'mon',
+    color: Colors.grey,
+    marginTop: 8,
+    fontSize: 13,
   },
   galleryContainer: {
     flex: 1,

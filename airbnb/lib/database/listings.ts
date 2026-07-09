@@ -1,5 +1,8 @@
 import * as SQLite from 'expo-sqlite';
 
+import { ADMIN_EMAIL } from '@/lib/admin';
+import { buildDemoListings, DEMO_LISTING_COUNT, MIN_DEMO_HOSTS } from '@/lib/demoListings';
+
 export type ListingStatus = 'pending' | 'accepted' | 'rejected';
 
 export type Listing = Record<string, any> & {
@@ -142,6 +145,7 @@ type ListingRow = {
   category_title?: string | null;
   owner_user_id: string | null;
   owner_email: string | null;
+  host_picture_url?: string | null;
   latitude: number | null;
   longitude: number | null;
 };
@@ -158,6 +162,7 @@ type UserTripRow = Booking & {
   category_title?: string | null;
   owner_user_id: string | null;
   owner_email: string | null;
+  host_picture_url?: string | null;
   latitude: number | null;
   longitude: number | null;
   review_id: string | null;
@@ -199,6 +204,7 @@ export type ListingsGeo = {
 
 const DATABASE_NAME = 'airbnb.db';
 const USER_OWNED_RESET_KEY = 'user_owned_listings_reset_v1';
+const DEMO_LISTINGS_SEED_KEY = 'demo_listings_seed_v3';
 
 const defaultCategories: Category[] = [
   {
@@ -287,6 +293,7 @@ const parseListingRow = (row: ListingRow): Listing => {
     category_title: row.category_title ?? listing.category_title ?? null,
     owner_user_id: row.owner_user_id,
     owner_email: row.owner_email,
+    host_picture_url: row.host_picture_url ?? listing.host_picture_url ?? null,
     latitude: row.latitude ?? listing.latitude,
     longitude: row.longitude ?? listing.longitude,
     image_urls: parseJsonArray(listing.image_urls) as string[],
@@ -643,6 +650,71 @@ export const getUserById = async (id: string) => {
   );
 };
 
+export const seedDemoListingsForExistingUsers = async () => {
+  await initializeListingsDatabase();
+
+  const db = await getDatabase();
+  const seedMeta = await db.getFirstAsync<{ value: string }>(
+    'SELECT value FROM app_meta WHERE key = ? LIMIT 1',
+    [DEMO_LISTINGS_SEED_KEY]
+  );
+
+  if (seedMeta) {
+    return {
+      inserted: 0,
+      skipped: true,
+      reason: 'already-seeded',
+    };
+  }
+
+  const owners = await db.getAllAsync<AppUser>(
+    `SELECT id, email, first_name, last_name, image_url
+    FROM users
+    WHERE LOWER(TRIM(COALESCE(email, ''))) != LOWER(TRIM(?))
+    ORDER BY created_at ASC, email ASC`,
+    [ADMIN_EMAIL]
+  );
+
+  if (owners.length < MIN_DEMO_HOSTS) {
+    console.log(
+      `Demo listing seed skipped. Need at least ${MIN_DEMO_HOSTS} non-admin users, found ${owners.length}.`
+    );
+    return {
+      inserted: 0,
+      skipped: true,
+      reason: 'not-enough-users',
+    };
+  }
+
+  const demoListings = buildDemoListings(owners);
+
+  for (const listing of demoListings) {
+    await writeListing(db, listing);
+  }
+
+  await db.runAsync(
+    `INSERT INTO app_meta (key, value, updated_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      value = excluded.value,
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      DEMO_LISTINGS_SEED_KEY,
+      JSON.stringify({
+        seededAt: new Date().toISOString(),
+        listingCount: DEMO_LISTING_COUNT,
+        ownerCount: owners.length,
+      }),
+    ]
+  );
+
+  return {
+    inserted: demoListings.length,
+    skipped: false,
+    reason: null,
+  };
+};
+
 export const createNotification = async (input: {
   userId?: string | null;
   type: NotificationType;
@@ -794,10 +866,12 @@ export const getListings = async (status: ListingStatus = 'accepted', categoryId
       categories.title as category_title,
       listings.owner_user_id,
       listings.owner_email,
+      users.image_url as host_picture_url,
       listings.latitude,
       listings.longitude
     FROM listings
     LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN users ON users.id = listings.owner_user_id
     WHERE listings.status = ? ${categoryClause}
     ORDER BY listings.updated_at DESC`,
     params
@@ -819,10 +893,12 @@ export const getHostListings = async (ownerUserId: string) => {
       categories.title as category_title,
       listings.owner_user_id,
       listings.owner_email,
+      users.image_url as host_picture_url,
       listings.latitude,
       listings.longitude
     FROM listings
     LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN users ON users.id = listings.owner_user_id
     WHERE listings.owner_user_id = ?
     ORDER BY listings.updated_at DESC`,
     [ownerUserId]
@@ -842,10 +918,12 @@ export const getListingById = async (id: string) => {
       categories.title as category_title,
       listings.owner_user_id,
       listings.owner_email,
+      users.image_url as host_picture_url,
       listings.latitude,
       listings.longitude
     FROM listings
     LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN users ON users.id = listings.owner_user_id
     WHERE listings.id = ?
     LIMIT 1`,
     [id]
@@ -1013,11 +1091,13 @@ export const getWishlistListings = async (userId: string) => {
       categories.title as category_title,
       listings.owner_user_id,
       listings.owner_email,
+      users.image_url as host_picture_url,
       listings.latitude,
       listings.longitude
     FROM wishlists
     INNER JOIN listings ON listings.id = wishlists.listing_id
     LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN users ON users.id = listings.owner_user_id
     WHERE wishlists.user_id = ? AND listings.status = 'accepted'
     ORDER BY wishlists.created_at DESC`,
     [userId]
@@ -1251,6 +1331,7 @@ export const getCompletedTripsForUser = async (userId: string) => {
       categories.title as category_title,
       listings.owner_user_id,
       listings.owner_email,
+      users.image_url as host_picture_url,
       listings.latitude,
       listings.longitude,
       reviews.id as review_id,
@@ -1260,6 +1341,7 @@ export const getCompletedTripsForUser = async (userId: string) => {
     FROM bookings
     INNER JOIN listings ON listings.id = bookings.listing_id
     LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN users ON users.id = listings.owner_user_id
     LEFT JOIN reviews ON reviews.booking_id = bookings.id
     WHERE bookings.user_id = ?
       AND bookings.status IN ('accepted', 'paid')
@@ -1276,6 +1358,7 @@ export const getCompletedTripsForUser = async (userId: string) => {
       category_title: row.category_title,
       owner_user_id: row.owner_user_id,
       owner_email: row.owner_email,
+      host_picture_url: row.host_picture_url,
       latitude: row.latitude,
       longitude: row.longitude,
     });
@@ -1736,10 +1819,12 @@ export const getListingsGeo = async (categoryId?: string | null): Promise<Listin
       categories.title as category_title,
       listings.owner_user_id,
       listings.owner_email,
+      users.image_url as host_picture_url,
       listings.latitude,
       listings.longitude
     FROM listings
     LEFT JOIN categories ON categories.id = listings.category_id
+    LEFT JOIN users ON users.id = listings.owner_user_id
     WHERE listings.status = 'accepted'
       AND listings.latitude IS NOT NULL
       AND listings.longitude IS NOT NULL

@@ -123,24 +123,46 @@ export default function AddHousePage() {
   };
 
   const onLocateMe = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
 
-    if (status !== 'granted') {
-      Alert.alert('Location permission needed', 'Please allow location access to use your current position.');
-      return;
+      if (status !== 'granted') {
+        Alert.alert('Location permission needed', 'Please allow location access to use your current position.');
+        return;
+      }
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        Alert.alert('Location unavailable', 'Please enable location services on the emulator or device.');
+        return;
+      }
+
+      const location =
+        (await Location.getLastKnownPositionAsync({
+          maxAge: 1000 * 60 * 5,
+          requiredAccuracy: 5000,
+        })) ??
+        (await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        }));
+
+      const nextRegion = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      };
+
+      setShowsUserLocation(true);
+      setRegion(nextRegion);
+      mapRef.current?.animateToRegion(nextRegion, 350);
+    } catch (error) {
+      console.log('Failed to locate user while adding house', error);
+      Alert.alert(
+        'Location unavailable',
+        'Android emulator cannot return your current location right now. Enable Location in emulator settings or set a GPS point from Android Studio.'
+      );
     }
-
-    const location = await Location.getCurrentPositionAsync({});
-    const nextRegion = {
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      latitudeDelta: 0.01,
-      longitudeDelta: 0.01,
-    };
-
-    setShowsUserLocation(true);
-    setRegion(nextRegion);
-    mapRef.current?.animateToRegion(nextRegion, 350);
   };
 
   const onSubmit = async () => {

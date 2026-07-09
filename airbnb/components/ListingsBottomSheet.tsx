@@ -13,7 +13,7 @@ interface Props {
 
 // Bottom sheet that wraps our Listings component
 const ListingsBottomSheet = ({ listings, category, onListingDeleted }: Props) => {
-  const snapPoints = useMemo(() => ['10%', '100%'], []);
+  const snapPoints = useMemo(() => ['18%', '92%'], []);
   const bottomSheetRef = useRef<BottomSheet>(null);
   const [refresh, setRefresh] = useState<number>(0);
 
@@ -27,7 +27,10 @@ const ListingsBottomSheet = ({ listings, category, onListingDeleted }: Props) =>
       ref={bottomSheetRef}
       index={1}
       snapPoints={snapPoints}
+      enableDynamicSizing={false}
       enablePanDownToClose={false}
+      enableContentPanningGesture
+      enableHandlePanningGesture
       handleIndicatorStyle={{ backgroundColor: Colors.grey }}
       style={styles.sheetContainer}>
       <View style={styles.contentContainer}>
@@ -37,7 +40,7 @@ const ListingsBottomSheet = ({ listings, category, onListingDeleted }: Props) =>
           category={category}
           onListingDeleted={onListingDeleted}
         />
-        <View style={styles.absoluteView}>
+        <View pointerEvents="box-none" style={styles.absoluteView}>
           <TouchableOpacity onPress={onShowMap} style={styles.btn}>
             <Text style={{ fontFamily: 'mon-sb', color: '#fff' }}>Map</Text>
             <Ionicons name="map" size={20} style={{ marginLeft: 10 }} color={'#fff'} />

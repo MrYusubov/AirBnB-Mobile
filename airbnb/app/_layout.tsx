@@ -66,6 +66,15 @@ function RootLayoutNav() {
   const { isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
 
+  const closeScreen = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace('/');
+  };
+
   // Automatically open login if user is not authenticated
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
@@ -87,7 +96,7 @@ function RootLayoutNav() {
             fontFamily: 'mon-sb',
           },
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()}>
+            <TouchableOpacity onPress={closeScreen}>
               <Ionicons name="close-outline" size={28} />
             </TouchableOpacity>
           ),
@@ -140,7 +149,7 @@ function RootLayoutNav() {
             fontFamily: 'mon-sb',
           },
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()}>
+            <TouchableOpacity onPress={closeScreen}>
               <Ionicons name="close-outline" size={28} />
             </TouchableOpacity>
           ),
@@ -155,7 +164,7 @@ function RootLayoutNav() {
             fontFamily: 'mon-sb',
           },
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()}>
+            <TouchableOpacity onPress={closeScreen}>
               <Ionicons name="close-outline" size={28} />
             </TouchableOpacity>
           ),
@@ -170,7 +179,7 @@ function RootLayoutNav() {
             fontFamily: 'mon-sb',
           },
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()}>
+            <TouchableOpacity onPress={closeScreen}>
               <Ionicons name="close-outline" size={28} />
             </TouchableOpacity>
           ),
@@ -185,7 +194,7 @@ function RootLayoutNav() {
           headerTitle: (props) => <ModalHeaderText />,
           headerLeft: () => (
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={closeScreen}
               style={{
                 backgroundColor: '#fff',
                 borderColor: Colors.grey,
@@ -201,3 +210,4 @@ function RootLayoutNav() {
     </Stack>
   );
 }
+

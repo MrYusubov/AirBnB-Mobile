@@ -107,6 +107,15 @@ const Login = () => {
     setResetSignInAttempt(null);
   };
 
+  const closeLogin = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace('/');
+  };
+
   const onSelectAuth = async (strategy: Strategy) => {
     const selectedAuth = {
       [Strategy.Google]: googleAuth,
@@ -120,7 +129,7 @@ const Login = () => {
 
       if (createdSessionId) {
         await setActive?.({ session: createdSessionId });
-        router.back();
+        closeLogin();
       }
     } catch (error) {
       Alert.alert('Could not continue', getErrorMessage(error));
@@ -151,7 +160,7 @@ const Login = () => {
 
       if (completeSignIn.status === 'complete' && completeSignIn.createdSessionId) {
         await setSignInActive({ session: completeSignIn.createdSessionId });
-        router.back();
+        closeLogin();
         return;
       }
 
@@ -222,7 +231,7 @@ const Login = () => {
 
       if (completeSignUp.status === 'complete' && completeSignUp.createdSessionId) {
         await setSignUpActive({ session: completeSignUp.createdSessionId });
-        router.back();
+        closeLogin();
         return;
       }
 
@@ -382,7 +391,7 @@ const Login = () => {
 
       if ((completedSignIn?.status === 'complete' || resetSignIn.status === 'complete') && sessionId) {
         await setSignInActive({ session: sessionId });
-        router.back();
+        closeLogin();
         return;
       }
 

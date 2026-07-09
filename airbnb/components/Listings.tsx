@@ -1,9 +1,8 @@
 import { Alert, GestureResponderEvent, View, Text, StyleSheet, ListRenderItem, TouchableOpacity } from 'react-native';
-import { defaultStyles } from '@/constants/Styles';
 import { Ionicons } from '@expo/vector-icons';
 import { Link, useFocusEffect } from 'expo-router';
 import Animated, { FadeInRight, FadeOutLeft } from 'react-native-reanimated';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BottomSheetFlatList, BottomSheetFlatListMethods } from '@gorhom/bottom-sheet';
 import { useUser } from '@clerk/clerk-expo';
 import Colors from '@/constants/Colors';
@@ -21,8 +20,10 @@ const Listings = ({ listings: items, refresh, category, onListingDeleted }: Prop
   const listRef = useRef<BottomSheetFlatListMethods>(null);
   const { user } = useUser();
   const { isAdmin } = useIsAdmin();
-  const [loading, setLoading] = useState<boolean>(false);
   const [wishlistedIds, setWishlistedIds] = useState<string[]>([]);
+  const [visibleCount, setVisibleCount] = useState(10);
+  const visibleItems = useMemo(() => items.slice(0, visibleCount), [items, visibleCount]);
+  const hasMore = visibleCount < items.length;
 
   // Update the view to scroll the list back top
   useEffect(() => {
@@ -35,14 +36,10 @@ const Listings = ({ listings: items, refresh, category, onListingDeleted }: Prop
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   };
 
-  // Use for "updating" the views data after category changed
   useEffect(() => {
-    setLoading(true);
-
-    setTimeout(() => {
-      setLoading(false);
-    }, 200);
-  }, [category]);
+    setVisibleCount(10);
+    requestAnimationFrame(scrollListTop);
+  }, [category, items]);
 
   useFocusEffect(
     useCallback(() => {
@@ -153,18 +150,43 @@ const Listings = ({ listings: items, refresh, category, onListingDeleted }: Prop
   };
 
   return (
-    <View style={defaultStyles.container}>
-      <BottomSheetFlatList
-        renderItem={renderRow}
-        data={loading ? [] : items}
-        ref={listRef}
-        ListHeaderComponent={<Text style={styles.info}>{items.length} homes</Text>}
-      />
-    </View>
+    <BottomSheetFlatList
+      key={`${category}-${items.length}`}
+      ref={listRef}
+      data={visibleItems}
+      renderItem={renderRow}
+      keyExtractor={(item) => item.id}
+      ListHeaderComponent={
+        <Text style={styles.info}>
+          {items.length === 0 ? 'No homes found' : `Showing ${visibleItems.length} of ${items.length} homes`}
+        </Text>
+      }
+      ListFooterComponent={
+        hasMore ? (
+          <TouchableOpacity
+            activeOpacity={0.86}
+            style={styles.showMoreButton}
+            onPress={() => setVisibleCount((current) => Math.min(current + 10, items.length))}>
+            <Text style={styles.showMoreText}>Show more</Text>
+            <Ionicons name="chevron-down" size={18} color={Colors.dark} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.footerSpacer} />
+        )
+      }
+      contentContainerStyle={styles.listContent}
+      keyboardShouldPersistTaps="handled"
+      nestedScrollEnabled
+      showsVerticalScrollIndicator
+    />
   );
 };
 
 const styles = StyleSheet.create({
+  listContent: {
+    backgroundColor: '#FDFFFF',
+    paddingBottom: 120,
+  },
   listing: {
     padding: 16,
     gap: 10,
@@ -202,6 +224,29 @@ const styles = StyleSheet.create({
     fontFamily: 'mon-sb',
     fontSize: 16,
     marginTop: 4,
+  },
+  showMoreButton: {
+    alignSelf: 'center',
+    minWidth: 150,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0, 0, 0, 0.16)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+    marginBottom: 24,
+    backgroundColor: '#fff',
+  },
+  showMoreText: {
+    fontFamily: 'mon-sb',
+    color: Colors.dark,
+    fontSize: 15,
+  },
+  footerSpacer: {
+    height: 24,
   },
 });
 

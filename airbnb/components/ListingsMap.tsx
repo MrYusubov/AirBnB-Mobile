@@ -1,4 +1,4 @@
-import { View, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { Alert, View, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import React, { memo, useEffect, useRef } from 'react';
 import { defaultStyles } from '@/constants/Styles';
 import { Marker } from 'react-native-maps';
@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import * as Location from 'expo-location';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Props {
   listings: any;
@@ -22,10 +23,11 @@ const INITIAL_REGION = {
 const ListingsMap = memo(({ listings }: Props) => {
   const router = useRouter();
   const mapRef = useRef<any>(null);
+  const insets = useSafeAreaInsets();
 
   // When the component mounts, locate the user
   useEffect(() => {
-    onLocateMe();
+    void onLocateMe(false);
   }, []);
 
   // When a marker is selected, navigate to the listing page
@@ -34,22 +36,68 @@ const ListingsMap = memo(({ listings }: Props) => {
   };
 
   // Focus the map on the user's location
-  const onLocateMe = async () => {
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      return;
+  const getAvailableLocation = async (preferCurrent = false) => {
+    if (preferCurrent) {
+      try {
+        return await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+      } catch (error) {
+        console.log('Falling back to last known location', error);
+      }
     }
 
-    let location = await Location.getCurrentPositionAsync({});
+    const lastKnownLocation = await Location.getLastKnownPositionAsync({
+      maxAge: 1000 * 60 * 5,
+      requiredAccuracy: 5000,
+    });
 
-    const region = {
-      latitude: location.coords.latitude,
-      longitude: location.coords.longitude,
-      latitudeDelta: 7,
-      longitudeDelta: 7,
-    };
+    if (lastKnownLocation) {
+      return lastKnownLocation;
+    }
 
-    mapRef.current?.animateToRegion(region);
+    return Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+  };
+
+  const onLocateMe = async (showAlert = true) => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        if (showAlert) {
+          Alert.alert('Location permission needed', 'Please allow location access to use your current position.');
+        }
+        return;
+      }
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        if (showAlert) {
+          Alert.alert('Location unavailable', 'Please enable location services on the emulator or device.');
+        }
+        return;
+      }
+
+      const location = await getAvailableLocation(showAlert);
+
+      const region = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        latitudeDelta: 7,
+        longitudeDelta: 7,
+      };
+
+      mapRef.current?.animateToRegion(region);
+    } catch (error) {
+      console.log('Failed to locate user', error);
+      if (showAlert) {
+        Alert.alert(
+          'Location unavailable',
+          'Android emulator cannot return your current location right now. Enable Location in emulator settings or set a GPS point from Android Studio.'
+        );
+      }
+    }
   };
 
   // Overwrite the renderCluster function to customize the cluster markers
@@ -105,7 +153,9 @@ const ListingsMap = memo(({ listings }: Props) => {
           </Marker>
         ))}
       </MapView>
-      <TouchableOpacity style={styles.locateBtn} onPress={onLocateMe}>
+      <TouchableOpacity
+        style={[styles.locateBtn, { top: Math.max(insets.top + 96, 118) }]}
+        onPress={() => onLocateMe(true)}>
         <Ionicons name="navigate" size={24} color={Colors.dark} />
       </TouchableOpacity>
     </View>
